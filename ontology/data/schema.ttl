@@ -1,0 +1,50 @@
+@prefix ex: <http://example.org/onto-medical#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:hasDisease a owl:ObjectProperty ;
+    rdfs:label "est atteint de"@fr ;
+    rdfs:comment "Relie un patient à une maladie diagnostiquée."@fr ;
+    rdfs:domain ex:Patient ;
+    rdfs:range ex:Disease .
+
+ex:name a owl:DatatypeProperty ;
+    rdfs:label "nom"@fr ;
+    rdfs:comment "Nom lisible d'un médecin, patient, maladie ou hôpital."@fr ;
+    rdfs:range xsd:string .
+
+ex:specialistIn a owl:ObjectProperty ;
+    rdfs:label "est spécialiste de"@fr ;
+    rdfs:comment "Relie un médecin à une maladie dont il est spécialiste."@fr ;
+    rdfs:domain ex:Doctor ;
+    rdfs:range ex:Disease .
+
+ex:treats a owl:ObjectProperty ;
+    rdfs:label "soigne"@fr ;
+    rdfs:comment "Relie un médecin au patient qu'il soigne."@fr ;
+    rdfs:domain ex:Doctor ;
+    rdfs:range ex:Patient .
+
+ex:worksAt a owl:ObjectProperty ;
+    rdfs:label "travaille à"@fr ;
+    rdfs:comment "Relie un médecin à l'hôpital où il exerce."@fr ;
+    rdfs:domain ex:Doctor ;
+    rdfs:range ex:Hospital .
+
+ex:Hospital a owl:Class ;
+    rdfs:label "Hôpital"@fr ;
+    rdfs:comment "Un établissement de soins."@fr .
+
+ex:Disease a owl:Class ;
+    rdfs:label "Maladie"@fr ;
+    rdfs:comment "Une pathologie pouvant être diagnostiquée chez un patient."@fr .
+
+ex:Patient a owl:Class ;
+    rdfs:label "Patient"@fr ;
+    rdfs:comment "Une personne suivie médicalement."@fr .
+
+ex:Doctor a owl:Class ;
+    rdfs:label "Médecin"@fr ;
+    rdfs:comment "Une personne qui exerce la médecine."@fr .
+

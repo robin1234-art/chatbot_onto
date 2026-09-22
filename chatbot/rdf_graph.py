@@ -1,0 +1,26 @@
+"""RdfGraph tolérant aux requêtes SPARQL générées par le LLM entre balises markdown.
+
+`GraphSparqlQAChain` transmet le texte généré par le LLM tel quel à
+`RdfGraph.query`/`update`. Beaucoup de modèles de chat entourent leur réponse
+de balises ```sparql ... ``` malgré la consigne du prompt de ne renvoyer que
+la requête, ce qui fait échouer le parseur SPARQL de rdflib sur le backtick.
+"""
+import re
+
+from langchain_community.graphs import RdfGraph
+
+_CODE_FENCE_RE = re.compile(r"^```[a-zA-Z]*\n?|\n?```$", re.MULTILINE)
+
+
+def _strip_code_fence(query: str) -> str:
+    return _CODE_FENCE_RE.sub("", query).strip()
+
+
+class CleanRdfGraph(RdfGraph):
+    """RdfGraph qui retire les balises markdown avant d'exécuter la requête."""
+
+    def query(self, query: str):
+        return super().query(_strip_code_fence(query))
+
+    def update(self, query: str) -> None:
+        return super().update(_strip_code_fence(query))
