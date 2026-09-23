@@ -8,6 +8,7 @@ Usage :
     python -m chatbot.cli
 """
 import argparse
+import logging
 
 from .graph_qa import build_chain
 
@@ -32,7 +33,13 @@ def main() -> None:
         help="Masque les logs verbeux de la chaîne LangChain.",
     )
     args = parser.parse_args()
-    
+
+    if not args.quiet:
+        # Trace les corrections floues appliquées aux requêtes générées.
+        fuzzy_logger = logging.getLogger("chatbot.entity_matcher")
+        fuzzy_logger.setLevel(logging.INFO)
+        fuzzy_logger.addHandler(logging.StreamHandler())
+
     chain = build_chain(verbose=not args.quiet)
 
     if args.question:

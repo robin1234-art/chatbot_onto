@@ -15,3 +15,7 @@ ARISTOTE_BASE_URL = os.environ.get("ARISTOTE_BASE_URL", "https://openrouter.ai/a
 ARISTOTE_MODEL = os.environ.get("ARISTOTE_MODEL", "openai/gpt-4o-mini")
 
 ONTOLOGY_PATH = Path(__file__).resolve().parent.parent / "ontology" / "data" / "ontology.ttl"
+
+# Score minimal (0-100, rapidfuzz.fuzz.ratio sur chaînes normalisées) pour
+# remplacer un littéral d'instance de la requête par sa forme canonique.
+FUZZY_INSTANCE_THRESHOLD = float(os.environ.get("FUZZY_INSTANCE_THRESHOLD", "90"))

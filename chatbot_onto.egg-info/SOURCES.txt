@@ -5,6 +5,7 @@ chatbot/cli.py
 chatbot/config.py
 chatbot/graph_qa.py
 chatbot/llm.py
+chatbot/rdf_graph.py
 chatbot_onto.egg-info/PKG-INFO
 chatbot_onto.egg-info/SOURCES.txt
 chatbot_onto.egg-info/dependency_links.txt

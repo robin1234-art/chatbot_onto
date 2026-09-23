@@ -15,6 +15,14 @@ CLASSES = {
     EX.Hospital: ("Hôpital", "Un établissement de soins."),
 }
 
+# Préfixes usuels des noms d'individus, par classe. Le fuzzy matching du
+# chatbot compare aussi les noms privés de ce préfixe, pour que "Saint-Louis"
+# retrouve "Hôpital Saint-Louis" et "Bernard" retrouve "Dr Bernard".
+NAME_PREFIXES = {
+    EX.Doctor: ("Dr", "Docteur", "Docteure"),
+    EX.Hospital: ("Hôpital", "CHU"),
+}
+
 # Propriétés de type donnée : URI -> (label FR, commentaire FR)
 # Nécessaire pour que GraphSparqlQAChain sache qu'il existe un composant
 # interrogeable pour identifier une entité par son nom (sans ça, le LLM

@@ -68,6 +68,35 @@ rien, ou pire, qui s'exécute sur le mauvais concept sans le signaler.
    (ex. propriété `onto:name` inventée au lieu de `rdfs:label` ; "infirmier"
    mappé sans le dire sur `Doctor` faute de classe correspondante).
 
+### État : valeurs d'instance ✅ — concepts ⏳
+
+La correction des **valeurs d'instance** est implémentée dans
+[chatbot/entity_matcher.py](chatbot/entity_matcher.py) et branchée dans
+`CleanRdfGraph.query` :
+
+- index construit au démarrage à partir des littéraux (`rdfs:label`,
+  `ex:name`) portés par les individus du graphe ;
+- normalisation (minuscules, accents, ponctuation) puis
+  `rapidfuzz.fuzz.ratio`, seuil `FUZZY_INSTANCE_THRESHOLD` (défaut 90), et
+  refus de corriger si les deux meilleurs candidats sont à moins de 5 points ;
+- seconde comparaison sans préfixe de classe (`NAME_PREFIXES` dans
+  [ontology/schema.py](ontology/schema.py) : `Dr`/`Docteur`, `Hôpital`/`CHU`,
+  articles `l'`/`le`/`la` ignorés), utilisée seulement si le label complet ne
+  donne rien de concluant : `"saint-louis"` → `"Hôpital Saint-Louis"`,
+  `"Bernard"` → `"Dr Bernard"` ;
+- seuls les littéraux en position d'égalité sont remplacés (objet d'un
+  triplet, `FILTER(?v = "…")`, `FILTER(STR(?v) = "…")`), par la forme
+  canonique **du prédicat utilisé** : `"…"@fr` pour `rdfs:label`, `"…"` pour
+  `ex:name` — ce qui corrige aussi les tags de langue incohérents ;
+- les arguments de `CONTAINS`/`REGEX`/`LCASE`… ne sont jamais modifiés ;
+- chaque correction est tracée (`[fuzzy] "Chloe" -> "Chloé" (score 100)`)
+  hors mode `--quiet`. Le « SPARQL généré » affiché reste celui du LLM.
+
+Tests (sans LLM) : `pytest tests`.
+
+Limites connues de cette itération : URIs d'individus hallucinées non
+corrigées, concepts non validés.
+
 ### Solution : fuzzy matching en validation post-génération
 
 Point d'ancrage : [chatbot/rdf_graph.py](chatbot/rdf_graph.py) (`CleanRdfGraph`),
