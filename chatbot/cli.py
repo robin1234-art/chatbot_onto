@@ -7,6 +7,7 @@ Usage :
     # Mode interactif : boucle de questions tant qu'aucune question n'est fournie
     python -m chatbot.cli
 """
+
 import argparse
 import logging
 
@@ -73,7 +74,8 @@ def main() -> None:
         help="Question à poser. Si omise, lance une boucle interactive.",
     )
     parser.add_argument(
-        "-q", "--quiet",
+        "-q",
+        "--quiet",
         action="store_true",
         help="Masque les logs verbeux de la chaîne LangChain.",
     )

@@ -1,9 +1,10 @@
 """Tests de la résolution d'entités en amont de la chaîne SPARQL (LLM simulé)."""
+
 import json
 from types import SimpleNamespace
 
 import pytest
-from rdflib import Literal, RDF, RDFS
+from rdflib import RDF, RDFS, Literal
 
 from chatbot.entity_matcher import InstanceIndex
 from chatbot.resolver import (
@@ -44,6 +45,7 @@ def index():
 
 # --- extraction ------------------------------------------------------------
 
+
 def test_extract_maps_class_names_to_uris(index):
     llm = FakeLLM(mentions(("docteur Bornard", "Doctor"), ("Saint-Louis", "Inconnue")))
     found = extract_mentions(
@@ -55,9 +57,7 @@ def test_extract_maps_class_names_to_uris(index):
 
 def test_extract_accepts_code_fenced_json(index):
     llm = FakeLLM("```json\n" + json.dumps(mentions(("Bob", "Patient"))) + "\n```")
-    assert extract_mentions("Qui soigne Bob ?", llm, index.classes) == [
-        Mention("Bob", EX.Patient)
-    ]
+    assert extract_mentions("Qui soigne Bob ?", llm, index.classes) == [Mention("Bob", EX.Patient)]
 
 
 @pytest.mark.parametrize("response", ["pas du JSON", "[]", '{"autre": 1}'])
@@ -72,6 +72,7 @@ def test_extract_ignores_mention_absent_from_question(index):
 
 
 # --- résolution ------------------------------------------------------------
+
 
 def test_normalized_equivalent_is_exact(index):
     r = resolve(Mention("diabète", EX.Disease), index, THRESHOLD)
@@ -102,7 +103,7 @@ def test_unknown_name_without_class_has_no_candidates(index):
     assert (r.status, r.candidates) == (Status.NOT_FOUND, ())
 
 
-def test_close_candidates_are_ambiguous(index):
+def test_close_candidates_are_ambiguous():
     # "Dr Marton" est à égale distance de "Dr Martin" et d'un "Dr Marten" ajouté.
     graph = build_schema() + build_instances()
     graph.add((EX.DrMarten, RDF.type, EX.Doctor))
@@ -115,8 +116,11 @@ def test_close_candidates_are_ambiguous(index):
 
 # --- réécriture ------------------------------------------------------------
 
+
 def test_rewrite_quotes_canonical_label():
-    q = rewrite("Que sais-tu du Docteur Bornard ?", [(Mention("docteur Bornard", None), "Dr Bernard")])
+    q = rewrite(
+        "Que sais-tu du Docteur Bornard ?", [(Mention("docteur Bornard", None), "Dr Bernard")]
+    )
     assert q == 'Que sais-tu du "Dr Bernard" ?'
 
 
@@ -126,6 +130,7 @@ def test_rewrite_does_not_double_quotes():
 
 
 # --- flow complet ----------------------------------------------------------
+
 
 def resolver_for(index, response):
     return QuestionResolver(FakeLLM(response), index, THRESHOLD)

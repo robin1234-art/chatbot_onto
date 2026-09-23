@@ -3,6 +3,7 @@
 Le LLM lit le schéma RDFS/OWL exposé par RdfGraph, génère une requête SPARQL,
 l'exécute sur le graphe local, puis rédige la réponse à partir des résultats.
 """
+
 from langchain_community.chains.graph_qa.sparql import GraphSparqlQAChain
 
 from .config import ONTOLOGY_PATH
@@ -32,7 +33,3 @@ def build_chain(verbose: bool = True) -> GraphSparqlQAChain:
         return_sparql_query=True,
         verbose=verbose,
     )
-
-
-if __name__ == "__main__":
-    print(build_chain())

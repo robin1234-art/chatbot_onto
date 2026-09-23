@@ -1,4 +1,5 @@
 """Client LLM pointant vers Aristote (API compatible OpenAI)."""
+
 from langchain_openai import ChatOpenAI
 
 from .config import ARISTOTE_API_KEY, ARISTOTE_BASE_URL, ARISTOTE_MODEL

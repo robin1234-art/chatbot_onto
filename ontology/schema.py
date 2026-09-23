@@ -3,7 +3,8 @@
 Domaine choisi : médecins, patients, maladies et hôpitaux, avec 4 propriétés
 d'objet reliant ces classes.
 """
-from rdflib import Graph, Literal, OWL, RDF, RDFS, XSD
+
+from rdflib import OWL, RDF, RDFS, XSD, Graph, Literal
 
 from .namespace import EX
 

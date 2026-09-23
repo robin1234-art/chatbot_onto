@@ -3,7 +3,8 @@
 Ce fichier ne redéfinit aucune classe ni propriété : il se contente
 d'instancier le vocabulaire déclaré dans schema.py.
 """
-from rdflib import Graph, Literal, RDF, RDFS
+
+from rdflib import RDF, RDFS, Graph, Literal
 
 from .namespace import EX
 

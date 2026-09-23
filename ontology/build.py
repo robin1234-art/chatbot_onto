@@ -8,6 +8,7 @@ Produit trois fichiers dans ontology/data/ :
     - instances.ttl   : individus et faits seuls
     - ontology.ttl    : schéma + instances fusionnés (utilisé par le chatbot)
 """
+
 from pathlib import Path
 
 from .instances import build_instances

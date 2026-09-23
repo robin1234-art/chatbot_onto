@@ -17,14 +17,15 @@ Déroulé pour une question :
 Aucune entrée/sortie ici : le choix de l'utilisateur est délégué à un
 callback (`Chooser`), fourni par l'interface (voir cli.py).
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
 
 from rdflib import Graph, URIRef
 
@@ -62,7 +63,7 @@ class Resolution:
 
 # Reçoit une résolution à arbitrer, renvoie le label retenu ou None pour
 # garder la formulation d'origine.
-Chooser = Callable[[Resolution], "str | None"]
+Chooser = Callable[[Resolution], str | None]
 
 
 _EXTRACTION_PROMPT = """Tu analyses une question posée à un chatbot qui interroge une ontologie.
@@ -144,7 +145,7 @@ def rewrite(question: str, choices: list[tuple[Mention, str]]) -> str:
     """Remplace chaque mention par son label retenu, entre guillemets."""
     for mention, label in choices:
         pattern = re.compile(rf'"?{re.escape(mention.text)}"?', re.IGNORECASE)
-        question = pattern.sub(lambda _: f'"{label}"', question, count=1)
+        question = pattern.sub(lambda _, label=label: f'"{label}"', question, count=1)
     return question
 
 
@@ -157,7 +158,7 @@ class QuestionResolver:
         self.threshold = threshold
 
     @classmethod
-    def from_graph(cls, graph: Graph, llm, threshold: float) -> "QuestionResolver":
+    def from_graph(cls, graph: Graph, llm, threshold: float) -> QuestionResolver:
         return cls(llm, InstanceIndex.from_graph(graph, NAME_PREFIXES), threshold)
 
     def reformulate(self, question: str, choose: Chooser) -> str:
@@ -166,7 +167,8 @@ class QuestionResolver:
             resolution = resolve(mention, self.index, self.threshold)
             if resolution.status is Status.EXACT:
                 label = resolution.candidates[0].label
-                logger.info('[résolution] "%s" -> "%s"', mention.text, label)
+                if label != mention.text:
+                    logger.info('[résolution] "%s" -> "%s"', mention.text, label)
             elif resolution.candidates:
                 label = choose(resolution)
             else:

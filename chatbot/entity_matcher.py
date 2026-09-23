@@ -10,15 +10,16 @@ La comparaison se fait sur des chaînes normalisées (minuscules, sans accents
 ni ponctuation), une seconde fois sans le préfixe usuel de la classe ("Dr",
 "Hôpital"...) pour que "Bernard" retrouve "Dr Bernard".
 """
+
 from __future__ import annotations
 
 import re
 import unicodedata
 from dataclasses import dataclass
 
+from rapidfuzz import fuzz
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS
-from rapidfuzz import fuzz
 
 
 def normalize(text: str) -> str:
@@ -44,7 +45,7 @@ def strip_prefix(norm: str, prefixes: tuple[str, ...]) -> str:
     text = " ".join(words)
     for prefix in prefixes:
         if text.startswith(prefix + " "):
-            return text[len(prefix) + 1:]
+            return text[len(prefix) + 1 :]
     return text
 
 
@@ -89,7 +90,7 @@ class InstanceIndex:
         cls,
         graph: Graph,
         name_prefixes: dict[URIRef, tuple[str, ...]] | None = None,
-    ) -> "InstanceIndex":
+    ) -> InstanceIndex:
         """Indexe les individus de chaque classe OWL du graphe.
 
         `name_prefixes` associe à une classe les préfixes usuels des noms de
@@ -110,7 +111,11 @@ class InstanceIndex:
                     norm = normalize(str(obj))
                     stripped = strip_prefix(norm, prefixes) if prefixes else norm
                     entries[(individual, norm)] = _Entry(
-                        individual, cls_uri, label, norm, prefixes,
+                        individual,
+                        cls_uri,
+                        label,
+                        norm,
+                        prefixes,
                         stripped if stripped != norm and stripped else None,
                     )
         return cls(list(entries.values()), classes)

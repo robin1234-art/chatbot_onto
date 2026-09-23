@@ -8,7 +8,6 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
     "rdflib>=7.0",
-    "langchain>=0.3",
     "langchain-community>=0.3",
     "langchain-openai>=0.2",
     "python-dotenv>=1.0",
@@ -16,7 +15,36 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = [
+    "pytest>=8.0",
+    "pre-commit>=4.0",
+]
 
 [tool.setuptools]
 packages = ["ontology", "chatbot"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes : imports / variables inutilisés
+    "I",       # tri des imports
+    "UP",      # syntaxe moderne
+    "B",       # bugbear
+    "SIM",     # simplifications
+    "ARG",     # arguments inutilisés
+    "ERA",     # code commenté
+]
+# Longueur de ligne gérée par black (docstrings/commentaires inclus).
+ignore = ["E501"]
+
+[tool.vulture]
+paths = ["chatbot", "ontology", "tests"]
+min_confidence = 60

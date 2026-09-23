@@ -9,6 +9,7 @@ le backtick.
 Les noms d'entités mal orthographiés sont corrigés en amont, sur la
 question elle-même (voir resolver.py).
 """
+
 import re
 
 from langchain_community.graphs import RdfGraph

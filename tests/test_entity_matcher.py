@@ -1,6 +1,7 @@
 """Tests de l'index flou des individus (sans appel au LLM)."""
+
 import pytest
-from rdflib import Graph, Literal, OWL, RDF, RDFS
+from rdflib import OWL, RDF, Graph, Literal
 
 from chatbot.entity_matcher import InstanceIndex, normalize
 from ontology.instances import build_instances
