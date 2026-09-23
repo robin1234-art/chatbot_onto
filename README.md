@@ -18,9 +18,11 @@ ontology/           # construction de l'ontologie (rdflib)
 chatbot/            # chatbot LLM (OpenRouter) sur l'ontologie
   config.py           # variables d'environnement, chemin de l'ontologie
   llm.py               # client OpenRouter (API compatible OpenAI)
+  entity_matcher.py    # index flou des individus de l'ontologie
+  resolver.py          # résolution des noms d'entités avant la chaîne SPARQL
   rdf_graph.py          # RdfGraph nettoyant les réponses markdown du LLM
   graph_qa.py          # chaîne RdfGraph + GraphSparqlQAChain
-  cli.py                # boucle de discussion en ligne de commande
+  cli.py                # boucle de discussion + confirmation des corrections
 ```
 
 L'ontologie minimale décrit médecins, patients, maladies et hôpitaux via 4
@@ -56,91 +58,46 @@ python -m chatbot.cli "Quels médecins soignent des patients atteints de diabèt
 python -m chatbot.cli
 ```
 
-## Limites connues et plan de résolution (fuzzy matching)
+## Résolution des noms d'entités (fuzzy matching)
 
-Constat empirique (voir tests manuels) : le Text2SPARQL échoue silencieusement
-dans deux cas distincts — une requête syntaxiquement valide qui ne retourne
-rien, ou pire, qui s'exécute sur le mauvais concept sans le signaler.
+Constat empirique : le Text2SPARQL échoue silencieusement quand l'utilisateur
+(ou le LLM) écrit mal le nom d'un individu — "docteur Bornard" au lieu de
+"Dr Bernard", "hopital saint louis" au lieu de "Hôpital Saint-Louis" — la
+requête s'exécute et ne renvoie rien.
 
-1. **Valeurs d'instance mal orthographiées / mal traduites par le LLM**
-   (ex. `Diabetes` généré au lieu de `Diabete`, accents manquants).
-2. **Concepts (classes/propriétés) hallucinés ou substitués silencieusement**
-   (ex. propriété `onto:name` inventée au lieu de `rdfs:label` ; "infirmier"
-   mappé sans le dire sur `Doctor` faute de classe correspondante).
+La correction se fait **sur la question, avant `GraphSparqlQAChain`**, qui
+reste inchangée ([chatbot/resolver.py](chatbot/resolver.py)) :
 
-### État : valeurs d'instance ✅ — concepts ⏳
+1. **Extraction** (LLM, sortie JSON) : mentions d'individus telles
+   qu'écrites dans la question + classe probable (`Doctor`...). Une question
+   qui ne porte que sur des classes ne produit aucune mention et part telle
+   quelle.
+2. **Résolution** (sans LLM, [chatbot/entity_matcher.py](chatbot/entity_matcher.py)) :
+   fuzzy match (`rapidfuzz.fuzz.ratio` sur chaînes normalisées, et une 2e fois
+   sans préfixe de classe `NAME_PREFIXES` : "Bernard" → "Dr Bernard") contre
+   les individus de la classe devinée, élargi à toute l'ontologie si la classe
+   ne donne rien.
 
-La correction des **valeurs d'instance** est implémentée dans
-[chatbot/entity_matcher.py](chatbot/entity_matcher.py) et branchée dans
-`CleanRdfGraph.query` :
+   | Résultat | Action |
+   |---|---|
+   | identique après normalisation (accents, casse, préfixe) | corrigé d'office |
+   | un candidat ≥ `FUZZY_SUGGEST_THRESHOLD` (défaut 75) | proposé : « Vouliez-vous dire "Dr Bernard" ? » |
+   | plusieurs candidats à moins de 5 points | liste proposée |
+   | aucun candidat | liste des individus de la classe proposée |
 
-- index construit au démarrage à partir des littéraux (`rdfs:label`,
-  `ex:name`) portés par les individus du graphe ;
-- normalisation (minuscules, accents, ponctuation) puis
-  `rapidfuzz.fuzz.ratio`, seuil `FUZZY_INSTANCE_THRESHOLD` (défaut 90), et
-  refus de corriger si les deux meilleurs candidats sont à moins de 5 points ;
-- seconde comparaison sans préfixe de classe (`NAME_PREFIXES` dans
-  [ontology/schema.py](ontology/schema.py) : `Dr`/`Docteur`, `Hôpital`/`CHU`,
-  articles `l'`/`le`/`la` ignorés), utilisée seulement si le label complet ne
-  donne rien de concluant : `"saint-louis"` → `"Hôpital Saint-Louis"`,
-  `"Bernard"` → `"Dr Bernard"` ;
-- seuls les littéraux en position d'égalité sont remplacés (objet d'un
-  triplet, `FILTER(?v = "…")`, `FILTER(STR(?v) = "…")`), par la forme
-  canonique **du prédicat utilisé** : `"…"@fr` pour `rdfs:label`, `"…"` pour
-  `ex:name` — ce qui corrige aussi les tags de langue incohérents ;
-- les arguments de `CONTAINS`/`REGEX`/`LCASE`… ne sont jamais modifiés ;
-- chaque correction est tracée (`[fuzzy] "Chloe" -> "Chloé" (score 100)`)
-  hors mode `--quiet`. Le « SPARQL généré » affiché reste celui du LLM.
+   Le seuil est bas car toute correction non triviale est validée par
+   l'utilisateur ; s'il garde sa formulation, elle est transmise telle quelle.
+3. **Reformulation** : la mention est remplacée par le label canonique entre
+   guillemets (`Que peux-tu me dire du "Dr Bernard" ?`), puis la question
+   reformulée est envoyée à `GraphSparqlQAChain`.
 
-Tests (sans LLM) : `pytest tests`.
+Tests (LLM simulé) : `pytest tests`.
 
-Limites connues de cette itération : URIs d'individus hallucinées non
-corrigées, concepts non validés.
+### Limites connues
 
-### Solution : fuzzy matching en validation post-génération
-
-Point d'ancrage : [chatbot/rdf_graph.py](chatbot/rdf_graph.py) (`CleanRdfGraph`),
-déjà responsable du nettoyage de la requête générée avant exécution. On y
-ajoute une étape de validation/correction, avant que la requête soit exécutée
-par rdflib :
-
-1. **Extraire** les URIs/local names réellement utilisés dans la requête
-   SPARQL générée (parsing via `rdflib.plugins.sparql.parser.parseQuery`).
-2. **Séparer** ces termes en deux catégories, validées indépendamment :
-   - *Concepts* (classes/propriétés) → comparés au vocabulaire du schéma
-     ([ontology/schema.py](ontology/schema.py) : local names + `rdfs:label` +
-     `rdfs:comment`).
-   - *Valeurs d'instance* (URIs d'individus, littéraux de `FILTER`) →
-     comparés aux `rdfs:label` des individus
-     ([ontology/instances.py](ontology/instances.py)).
-3. **Normaliser avant comparaison** : minuscule + suppression des accents +
-   retrait d'un **set de préfixes connus par classe** (ex. `Doctor` →
-   `{"dr", "docteur", "docteure"}`, `Hospital` → `{"hopital", "chu"}`), pour
-   que "Bernard" matche `"Dr Bernard"` et "Hopital Saint Louis" matche
-   `"Hôpital Saint-Louis"`.
-4. **Fuzzy match** (ex. `rapidfuzz.fuzz.ratio`) entre le terme extrait et
-   chaque candidat de l'index correspondant.
-5. **Seuil de confiance différent par catégorie** :
-   - *Valeurs d'instance* : seuil modéré (~80-85 %) — on cherche activement
-     à corriger une faute de frappe/accent ; le risque de faux positif est
-     limité (peu d'individus, labels distincts).
-   - *Concepts* (classes/propriétés) : **seuil élevé** (~92-95 %+) — un
-     mauvais concept mène silencieusement à une réponse sur la mauvaise
-     entité (cf. infirmier → Doctor). En dessous du seuil, on **refuse
-     d'exécuter** plutôt que de deviner, et on répond explicitement
-     "concept inconnu de l'ontologie" plutôt que de laisser rdflib renvoyer
-     un résultat vide sans explication.
-6. **Si un match valide dépasse le seuil**, substituer le terme halluciné
-   par l'URI/label canonique avant exécution (et le tracer dans les logs
-   verbeux pour audit).
-
-### Hors périmètre de cette itération
-
+- Concepts (classes/propriétés) non validés : "infirmier" peut encore être
+  mappé silencieusement sur `Doctor`.
+- La qualité de l'extraction dépend du LLM : une mention non repérée n'est pas
+  corrigée (la question part telle quelle).
 - Pas d'embeddings/vector store : le fuzzy matching lexical suffit vu la
-  taille actuelle de l'ontologie (~10 individus, 4 classes). À revisiter si
-  l'ontologie grossit significativement.
-- Pas de boucle de régénération automatique du SPARQL par le LLM en cas de
-  rejet sous le seuil — on se contente ici de répondre proprement plutôt que
-  de renvoyer un résultat vide sans explication. Piste d'amélioration
-  ultérieure : réinjecter les meilleurs candidats au LLM pour qu'il
-  régénère lui-même la requête ("retrieve on empty result").
+  taille actuelle de l'ontologie (~10 individus, 4 classes).

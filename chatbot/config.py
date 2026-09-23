@@ -17,5 +17,6 @@ ARISTOTE_MODEL = os.environ.get("ARISTOTE_MODEL", "openai/gpt-4o-mini")
 ONTOLOGY_PATH = Path(__file__).resolve().parent.parent / "ontology" / "data" / "ontology.ttl"
 
 # Score minimal (0-100, rapidfuzz.fuzz.ratio sur chaînes normalisées) pour
-# remplacer un littéral d'instance de la requête par sa forme canonique.
-FUZZY_INSTANCE_THRESHOLD = float(os.environ.get("FUZZY_INSTANCE_THRESHOLD", "90"))
+# proposer à l'utilisateur un individu de l'ontologie à la place d'un nom
+# mal orthographié. Seuil bas : la correction est confirmée par l'utilisateur.
+FUZZY_SUGGEST_THRESHOLD = float(os.environ.get("FUZZY_SUGGEST_THRESHOLD", "75"))
