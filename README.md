@@ -1,6 +1,32 @@
 # chatbot_onto
 An ontology-based chatbot that combines LLMs with a formally constructed ontology, pairing natural-language understanding with structured, verifiable knowledge.
 
+## Ontologie
+
+Le chatbot interroge par défaut un **extrait de Wikidata sur les prix Nobel**
+([ontology/data/nobel.ttl](ontology/data/nobel.ttl), ~52 000 triplets) :
+
+| Classe | Individus | Exemples de relations |
+|---|---|---|
+| `Person` | 1 333 (lauréats + directeurs de thèse) | `citizenOf`, `bornIn`, `educatedAt`, `worksFor`, `doctoralAdvisor` |
+| `Organization` | 33 (surtout prix de la paix) | `received`, `wonPrize` |
+| `NobelAward` | 1 033 attributions | `category`, `year`, `motivation` |
+| `NobelPrize` | 6 catégories | |
+| `Institution` / `Place` / `Country` | 1 566 / 994 / 163 | `locatedIn` |
+
+Wikidata n'est pas une ontologie OWL (pas de `owl:Class`, typage par
+`wdt:P31`, identifiants opaques `P166`) : l'extraction
+([ontology/nobel/extract.py](ontology/nobel/extract.py)) interroge le point
+d'accès SPARQL de Wikidata et convertit le résultat vers un vocabulaire OWL
+lisible (`nobel:`, [ontology/nobel/schema.py](ontology/nobel/schema.py)). Les
+individus gardent leur IRI Wikidata (`wd:Q7186`), avec label (fr, repli
+`mul` puis en), alias (`skos:altLabel`) et description (`rdfs:comment`).
+L'extrait est versionné : Wikidata évolue, l'évaluation doit porter sur un
+instantané fixe.
+
+L'ontologie médicale jouet d'origine reste disponible
+(`ONTOLOGY_PATH=ontology/data/ontology.ttl`) et sert aux tests.
+
 ## Architecture
 
 Approche **Text-to-SPARQL** : le LLM lit le schéma de l'ontologie, génère une
@@ -16,16 +42,19 @@ question
   ├─ 1. extraction (LLM, JSON)      mentions d'individus + classe probable
   ├─ 2. résolution (fuzzy, sans LLM) candidats dans l'ontologie
   │      └─ confirmation utilisateur si la correction n'est pas triviale
-  ├─ 3. reformulation               label canonique entre guillemets
+  ├─ 3. reformulation               label canonique + IRI de l'individu
   │
   └─ GraphSparqlQAChain (inchangée) question -> SPARQL -> résultats -> réponse
 ```
 
 ```
-ontology/           # construction de l'ontologie (rdflib)
-  namespace.py       # espace de noms partagé
-  schema.py           # TBox : classes + propriétés + préfixes de noms
-  instances.py        # ABox : individus + faits
+ontology/           # construction des ontologies (rdflib)
+  namespace.py       # espaces de noms partagés (dont chatbot:namePrefix)
+  nobel/              # ontologie des prix Nobel (défaut)
+    schema.py          # TBox : vocabulaire nobel: lisible
+    extract.py         # extraction Wikidata -> data/nobel.ttl
+  schema.py           # ontologie médicale jouet : TBox
+  instances.py        # ontologie médicale jouet : ABox
   build.py             # sérialise schema.ttl / instances.ttl / ontology.ttl
   data/                 # fichiers .ttl générés
 
@@ -34,16 +63,13 @@ chatbot/            # chatbot LLM sur l'ontologie
   llm.py               # client LLM (API compatible OpenAI)
   entity_matcher.py    # index flou des individus de l'ontologie
   resolver.py          # résolution des noms d'entités avant la chaîne SPARQL
-  rdf_graph.py          # RdfGraph retirant les balises markdown du SPARQL
-  graph_qa.py          # chaîne RdfGraph + GraphSparqlQAChain
+  rdf_graph.py          # RdfGraph : balises markdown, exemples d'individus
+  graph_qa.py          # chaîne RdfGraph + GraphSparqlQAChain, prompts FR
   cli.py                # boucle de discussion + confirmation des corrections
 
 tests/              # tests sans appel LLM (LLM simulé)
 ```
 
-L'ontologie minimale décrit médecins, patients, maladies et hôpitaux via 4
-propriétés d'objet (`treats`, `hasDisease`, `worksAt`, `specialistIn`) et une
-propriété de donnée (`name`).
 
 ## Installation
 
@@ -68,11 +94,13 @@ exécution directe (`python ontology/build.py`).
 ## Utilisation
 
 ```bash
-# 1. Générer l'ontologie (TBox + ABox -> ontology/data/*.ttl)
+# 1. (Optionnel) Réextraire l'ontologie Nobel depuis Wikidata (~2 min)
+python -m ontology.nobel.extract
+#    ... ou régénérer l'ontologie médicale jouet
 python -m ontology.build
 
 # 2. Poser une question unique
-python -m chatbot.cli "Quels médecins soignent des patients atteints de diabète ?"
+python -m chatbot.cli "Quels lauréats du Nobel de chimie ont étudié à Cambridge ?"
 
 # ... ou lancer une boucle interactive (sans argument)
 python -m chatbot.cli
@@ -94,12 +122,18 @@ pre-commit run --all-files   # passe complète
 
 pre-commit 4 requiert git ≥ 2.31.
 
-Exemple de correction confirmée :
+Exemples de corrections confirmées :
 
 ```
-Question> Que peux-tu me dire du docteur Bornard ?
-Vouliez-vous dire "Dr Bernard" au lieu de "docteur Bornard" ? [O/n]
-Question reformulée : Que peux-tu me dire du "Dr Bernard" ?
+Question> Qui était le directeur de thèse de Richard Feynmann ?
+Vouliez-vous dire "Richard Feynman" (Personne, physicien américain) au lieu de "Richard Feynmann" ? [O/n]
+Question reformulée : Qui était le directeur de thèse de Richard Feynmann ("Richard Feynman" <http://www.wikidata.org/entity/Q39246>) ?
+
+Question> Quels lauréats sont nés à Varsovie ?
+"Varsovie" peut désigner plusieurs entités :
+  1. Université de Varsovie (Établissement, université publique polonaise)
+  2. Varsovie (Lieu, capitale de la Pologne)
+  0. Garder "Varsovie"
 ```
 
 ## Résolution des entités
@@ -112,10 +146,13 @@ Implémentée dans [chatbot/resolver.py](chatbot/resolver.py) et
    classes ne produit aucune mention et part telle quelle.
 2. **Résolution** : `rapidfuzz.fuzz.ratio` sur chaînes normalisées
    (minuscules, sans accents ni ponctuation), comparées une 2e fois sans le
-   préfixe usuel de la classe (`NAME_PREFIXES` dans
-   [ontology/schema.py](ontology/schema.py) : "Bernard" → "Dr Bernard").
-   La recherche est restreinte à la classe devinée, élargie à toute
-   l'ontologie si elle ne donne rien.
+   préfixe usuel de la classe, lu dans l'ontologie (annotation
+   `chatbot:namePrefix` : "Bernard" → "Dr Bernard", "Nobel de physique" →
+   "prix Nobel de physique"). Seuls les littéraux de nom sont indexés
+   (`rdfs:label`, `skos:altLabel` et leurs sous-propriétés). La recherche est
+   restreinte à la classe devinée, élargie à toute l'ontologie si elle ne
+   donne rien ; les homonymes exacts des autres classes sont toujours
+   proposés ("Cambridge" : villes et université).
 
    | Résultat | Action |
    |---|---|
@@ -128,8 +165,9 @@ Implémentée dans [chatbot/resolver.py](chatbot/resolver.py) et
    l'utilisateur (fautes de frappe ≥ 80, noms différents ≤ 40 sur
    l'ontologie actuelle). S'il garde sa formulation, elle est transmise
    telle quelle.
-3. **Reformulation** : la mention est remplacée par le label canonique entre
-   guillemets, que le LLM SPARQL recopie à l'identique.
+3. **Reformulation** : la mention est suivie du label canonique et de l'IRI
+   de l'individu (`Français ("France" <…Q142>)`). Le LLM SPARQL utilise
+   l'IRI sans jointure sur le nom, qui ne distingue pas les homonymes.
 
 Le choix de l'utilisateur passe par un callback (`Chooser`) : le resolver ne
 fait aucune entrée/sortie, la CLI fournit l'implémentation terminal.
@@ -146,11 +184,46 @@ fait aucune entrée/sortie, la CLI fournit l'implémentation terminal.
    élevé (90) faute de confirmation. Limites : parsing positionnel fragile
    (seules les égalités étaient corrigeables, pas `CONTAINS` ni les URIs
    hallucinées), et fautes réelles sous le seuil ("Bornard"/"Bernard" = 86).
-3. **v2 — Résolution en amont avec confirmation** (actuel). La correction
+3. **v2 — Résolution en amont avec confirmation.** La correction
    porte sur la question, pas sur le SPARQL : la chaîne reste une boîte
    noire, et la validation par l'utilisateur autorise un seuil bas.
+4. **v3 — Extrait Wikidata des prix Nobel** (actuel). Passage à l'échelle
+   (≈ 17 700 noms indexés, ≈ 5 ms par recherche). Constats et corrections :
+   - Wikidata place les noms propres dans la langue `mul`, sans label fr/en
+     (Marie Curie n'avait pas de nom) : repli fr → mul → en.
+   - Tous les littéraux étaient indexés : "femme" devenait l'alias de 67
+     personnes. Index restreint aux propriétés de nom.
+   - Homonymes ("Cambridge" ×2) : descriptions Wikidata affichées au choix,
+     et IRI injectée dans la question, car une jointure sur le nom renvoyait
+     les deux villes.
+   - Le LLM inventait l'IRI des individus nommés par un nom commun
+     (`nobel:Physics`) : exemples d'individus par classe ajoutés au schéma
+     et au prompt d'extraction, prompt SPARQL en français.
+   - `nobel:laureate` (Attribution → lauréat) était écrit à l'envers :
+     renommé `nobel:received` (lauréat → Attribution).
+   - Résultats vides complétés par les connaissances du LLM de réponse
+     (hallucination masquée) : prompt de réponse restreint aux résultats.
 
 ## Limites connues
+
+- **Extraction instable des noms communs.** "Nobel de littérature" est
+  parfois repéré, parfois non ; sans IRI, le LLM SPARQL invente
+  `nobel:prixNobelDeLitterature` ou compare une propriété d'objet à une chaîne.
+- **SPARQL invalide occasionnel** (`SELECT COUNT(...)` sans alias) : l'erreur
+  est affichée, sans nouvel essai.
+- **Questions filtrées par année** ("Qui a gagné le prix Nobel de la paix en
+  2024 ?") : échec, pour deux raisons cumulées.
+  1. Le LLM déclare deux préfixes pour le même espace de noms
+     (`PREFIX ex:` et `PREFIX nobel:` → `http://example.org/onto-nobel#`).
+     rdflib (7.6) n'en retient qu'un : `Unknown namespace prefix : ex`,
+     alors que la requête est du SPARQL valide.
+  2. Même corrigée, la requête compare l'année à une chaîne
+     (`nobel:year "2024"`) alors qu'elle est stockée en `xsd:integer` : aucun
+     résultat. Avec `nobel:year 2024`, la réponse est bien *Nihon Hidankyō*.
+
+  Pistes : normaliser les préfixes avant exécution (dans `CleanRdfGraph`),
+  préciser le type dans le commentaire de `nobel:year` ("entier, sans
+  guillemets"), ou renvoyer l'erreur au LLM pour un nouvel essai.
 
 - **Questions de description pauvres.** "Qui est Bob ?" génère
   `SELECT ?name … FILTER(?name = "Bob")` : la requête est correcte mais

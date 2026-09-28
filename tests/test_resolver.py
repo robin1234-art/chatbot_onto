@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from rdflib import RDF, RDFS, Literal
 
-from chatbot.entity_matcher import InstanceIndex
+from chatbot.entity_matcher import InstanceIndex, Match
 from chatbot.resolver import (
     Mention,
     QuestionResolver,
@@ -17,7 +17,7 @@ from chatbot.resolver import (
 )
 from ontology.instances import build_instances
 from ontology.namespace import EX
-from ontology.schema import NAME_PREFIXES, build_schema
+from ontology.schema import build_schema
 
 THRESHOLD = 75
 
@@ -40,7 +40,7 @@ def mentions(*items):
 
 @pytest.fixture(scope="module")
 def index():
-    return InstanceIndex.from_graph(build_schema() + build_instances(), NAME_PREFIXES)
+    return InstanceIndex.from_graph(build_schema() + build_instances())
 
 
 # --- extraction ------------------------------------------------------------
@@ -48,27 +48,25 @@ def index():
 
 def test_extract_maps_class_names_to_uris(index):
     llm = FakeLLM(mentions(("docteur Bornard", "Doctor"), ("Saint-Louis", "Inconnue")))
-    found = extract_mentions(
-        "Le docteur Bornard travaille-t-il à Saint-Louis ?", llm, index.classes
-    )
+    found = extract_mentions("Le docteur Bornard travaille-t-il à Saint-Louis ?", llm, index)
     assert found == [Mention("docteur Bornard", EX.Doctor), Mention("Saint-Louis", None)]
     assert "- Doctor : Médecin" in llm.prompt
 
 
 def test_extract_accepts_code_fenced_json(index):
     llm = FakeLLM("```json\n" + json.dumps(mentions(("Bob", "Patient"))) + "\n```")
-    assert extract_mentions("Qui soigne Bob ?", llm, index.classes) == [Mention("Bob", EX.Patient)]
+    assert extract_mentions("Qui soigne Bob ?", llm, index) == [Mention("Bob", EX.Patient)]
 
 
 @pytest.mark.parametrize("response", ["pas du JSON", "[]", '{"autre": 1}'])
 def test_extract_ignores_unreadable_response(index, response):
-    assert extract_mentions("Qui soigne Bob ?", FakeLLM(response), index.classes) == []
+    assert extract_mentions("Qui soigne Bob ?", FakeLLM(response), index) == []
 
 
 def test_extract_ignores_mention_absent_from_question(index):
     # Le LLM a corrigé l'orthographe au lieu de recopier : non substituable.
     llm = FakeLLM(mentions(("docteur Bernard", "Doctor")))
-    assert extract_mentions("Qui est le docteur Bornard ?", llm, index.classes) == []
+    assert extract_mentions("Qui est le docteur Bornard ?", llm, index) == []
 
 
 # --- résolution ------------------------------------------------------------
@@ -103,12 +101,23 @@ def test_unknown_name_without_class_has_no_candidates(index):
     assert (r.status, r.candidates) == (Status.NOT_FOUND, ())
 
 
+def test_exact_homonyms_of_other_classes_are_candidates():
+    # "Martin" : le Dr Martin, mais aussi un hôpital Martin exactement homonyme.
+    graph = build_schema() + build_instances()
+    graph.add((EX.HopitalMartin, RDF.type, EX.Hospital))
+    graph.add((EX.HopitalMartin, RDFS.label, Literal("Hôpital Martin", lang="fr")))
+    idx = InstanceIndex.from_graph(graph)
+    r = resolve(Mention("Martin", EX.Doctor), idx, THRESHOLD)
+    assert r.status is Status.AMBIGUOUS
+    assert {m.uri for m in r.candidates} == {EX.DrMartin, EX.HopitalMartin}
+
+
 def test_close_candidates_are_ambiguous():
     # "Dr Marton" est à égale distance de "Dr Martin" et d'un "Dr Marten" ajouté.
     graph = build_schema() + build_instances()
     graph.add((EX.DrMarten, RDF.type, EX.Doctor))
     graph.add((EX.DrMarten, RDFS.label, Literal("Dr Marten", lang="fr")))
-    idx = InstanceIndex.from_graph(graph, NAME_PREFIXES)
+    idx = InstanceIndex.from_graph(graph)
     r = resolve(Mention("Dr Marton", EX.Doctor), idx, THRESHOLD)
     assert r.status is Status.AMBIGUOUS
     assert {m.label for m in r.candidates} == {"Dr Martin", "Dr Marten"}
@@ -117,16 +126,16 @@ def test_close_candidates_are_ambiguous():
 # --- réécriture ------------------------------------------------------------
 
 
-def test_rewrite_quotes_canonical_label():
-    q = rewrite(
-        "Que sais-tu du Docteur Bornard ?", [(Mention("docteur Bornard", None), "Dr Bernard")]
-    )
-    assert q == 'Que sais-tu du "Dr Bernard" ?'
+def test_rewrite_quotes_canonical_label_and_adds_iri():
+    match = Match(EX.DrBernard, "Dr Bernard", 90)
+    q = rewrite("Que sais-tu du Docteur Bornard ?", [(Mention("docteur Bornard", None), match)])
+    assert q == f'Que sais-tu du Docteur Bornard ("Dr Bernard" <{EX.DrBernard}>) ?'
 
 
-def test_rewrite_does_not_double_quotes():
-    q = rewrite('Qui soigne "bob" ?', [(Mention("bob", None), "Bob")])
-    assert q == 'Qui soigne "Bob" ?'
+def test_rewrite_keeps_grammar_of_adjectives():
+    match = Match(EX.HopitalSaintLouis, "Hôpital Saint-Louis", 100)
+    q = rewrite("Quels médecins saint-louisiens ?", [(Mention("saint-louisiens", None), match)])
+    assert q == f'Quels médecins saint-louisiens ("Hôpital Saint-Louis" <{EX.HopitalSaintLouis}>) ?'
 
 
 # --- flow complet ----------------------------------------------------------
@@ -143,7 +152,7 @@ def test_exact_match_is_rewritten_without_asking(index):
         raise AssertionError("aucune confirmation attendue")
 
     q = resolver.reformulate("Quels patients ont du diabète ?", choose)
-    assert q == 'Quels patients ont du "Diabète" ?'
+    assert q == f'Quels patients ont du diabète ("Diabète" <{EX.Diabete}>) ?'
 
 
 def test_accepted_suggestion_is_rewritten(index):
@@ -152,10 +161,10 @@ def test_accepted_suggestion_is_rewritten(index):
 
     def choose(resolution):
         asked.append(resolution)
-        return resolution.candidates[0].label
+        return resolution.candidates[0]
 
     q = resolver.reformulate("Que peux-tu me dire du docteur Bornard ?", choose)
-    assert q == 'Que peux-tu me dire du "Dr Bernard" ?'
+    assert q == f'Que peux-tu me dire du docteur Bornard ("Dr Bernard" <{EX.DrBernard}>) ?'
     assert asked[0].status is Status.SUGGESTION
 
 

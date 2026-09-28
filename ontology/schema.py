@@ -6,7 +6,7 @@ d'objet reliant ces classes.
 
 from rdflib import OWL, RDF, RDFS, XSD, Graph, Literal
 
-from .namespace import EX
+from .namespace import CHATBOT, EX
 
 # Classes : URI -> (label FR, commentaire FR)
 CLASSES = {
@@ -16,9 +16,10 @@ CLASSES = {
     EX.Hospital: ("Hôpital", "Un établissement de soins."),
 }
 
-# Préfixes usuels des noms d'individus, par classe. Le fuzzy matching du
-# chatbot compare aussi les noms privés de ce préfixe, pour que "Saint-Louis"
-# retrouve "Hôpital Saint-Louis" et "Bernard" retrouve "Dr Bernard".
+# Préfixes usuels des noms d'individus, par classe, publiés dans l'ontologie
+# (chatbot:namePrefix). Le fuzzy matching du chatbot compare aussi les noms
+# privés de ce préfixe, pour que "Saint-Louis" retrouve "Hôpital Saint-Louis"
+# et "Bernard" retrouve "Dr Bernard".
 NAME_PREFIXES = {
     EX.Doctor: ("Dr", "Docteur", "Docteure"),
     EX.Hospital: ("Hôpital", "CHU"),
@@ -70,11 +71,16 @@ def build_schema() -> Graph:
     """Construit le graphe TBox (classes + propriétés) de l'ontologie."""
     g = Graph()
     g.bind("ex", EX)
+    g.bind("chatbot", CHATBOT)
+
+    g.add((CHATBOT.namePrefix, RDF.type, OWL.AnnotationProperty))
 
     for cls, (label, comment) in CLASSES.items():
         g.add((cls, RDF.type, OWL.Class))
         g.add((cls, RDFS.label, Literal(label, lang="fr")))
         g.add((cls, RDFS.comment, Literal(comment, lang="fr")))
+        for prefix in NAME_PREFIXES.get(cls, ()):
+            g.add((cls, CHATBOT.namePrefix, Literal(prefix, lang="fr")))
 
     for prop, (label, domain, range_, comment) in OBJECT_PROPERTIES.items():
         g.add((prop, RDF.type, OWL.ObjectProperty))
@@ -88,5 +94,7 @@ def build_schema() -> Graph:
         g.add((prop, RDFS.label, Literal(label, lang="fr")))
         g.add((prop, RDFS.comment, Literal(comment, lang="fr")))
         g.add((prop, RDFS.range, XSD.string))
+        # Indexée par le fuzzy matching du chatbot comme un label.
+        g.add((prop, RDFS.subPropertyOf, RDFS.label))
 
     return g

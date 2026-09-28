@@ -1,7 +1,10 @@
+@prefix chatbot: <http://example.org/chatbot#> .
 @prefix ex: <http://example.org/onto-medical#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+chatbot:namePrefix a owl:AnnotationProperty .
 
 ex:DrBernard a ex:Doctor ;
     rdfs:label "Dr Bernard"@fr ;
@@ -36,7 +39,8 @@ ex:hasDisease a owl:ObjectProperty ;
 ex:name a owl:DatatypeProperty ;
     rdfs:label "nom"@fr ;
     rdfs:comment "Nom lisible d'un médecin, patient, maladie ou hôpital."@fr ;
-    rdfs:range xsd:string .
+    rdfs:range xsd:string ;
+    rdfs:subPropertyOf rdfs:label .
 
 ex:specialistIn a owl:ObjectProperty ;
     rdfs:label "est spécialiste de"@fr ;
@@ -89,6 +93,8 @@ ex:Diabete a ex:Disease ;
 
 ex:Hospital a owl:Class ;
     rdfs:label "Hôpital"@fr ;
+    chatbot:namePrefix "CHU"@fr,
+        "Hôpital"@fr ;
     rdfs:comment "Un établissement de soins."@fr .
 
 ex:Disease a owl:Class ;
@@ -101,5 +107,8 @@ ex:Patient a owl:Class ;
 
 ex:Doctor a owl:Class ;
     rdfs:label "Médecin"@fr ;
+    chatbot:namePrefix "Docteur"@fr,
+        "Docteure"@fr,
+        "Dr"@fr ;
     rdfs:comment "Une personne qui exerce la médecine."@fr .
 

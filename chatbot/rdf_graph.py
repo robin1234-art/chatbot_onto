@@ -6,6 +6,10 @@ réponse de balises ```sparql ... ``` malgré la consigne du prompt de ne
 renvoyer que la requête, ce qui fait échouer le parseur SPARQL de rdflib sur
 le backtick.
 
+Le schéma exposé au LLM est complété par des noms d'individus de chaque
+classe : sans eux, le LLM ignore que "prix Nobel de physique" est un individu
+désigné par son nom, et invente une IRI (nobel:Physics).
+
 Les noms d'entités mal orthographiés sont corrigés en amont, sur la
 question elle-même (voir resolver.py).
 """
@@ -13,6 +17,8 @@ question elle-même (voir resolver.py).
 import re
 
 from langchain_community.graphs import RdfGraph
+
+from .entity_matcher import InstanceIndex, local_name
 
 _CODE_FENCE_RE = re.compile(r"^```[a-zA-Z]*\n?|\n?```$", re.MULTILINE)
 
@@ -23,6 +29,20 @@ def _strip_code_fence(query: str) -> str:
 
 class CleanRdfGraph(RdfGraph):
     """RdfGraph qui retire les balises markdown avant d'exécuter une requête."""
+
+    def load_schema(self) -> None:
+        super().load_schema()
+        index = InstanceIndex.from_graph(self.graph)
+        lines = [
+            f"{local_name(cls)} : " + ", ".join(f'"{label}"' for label in labels)
+            for cls, labels in index.examples.items()
+            if labels
+        ]
+        self.schema += (
+            "Exemples de noms d'individus, par classe (valeurs de la propriété de nom) :\n"
+            + "\n".join(lines)
+            + "\n"
+        )
 
     def query(self, query: str):
         return super().query(_strip_code_fence(query))

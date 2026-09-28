@@ -1,17 +1,17 @@
 """Tests de l'index flou des individus (sans appel au LLM)."""
 
 import pytest
-from rdflib import OWL, RDF, Graph, Literal
+from rdflib import OWL, RDF, RDFS, Graph, Literal
 
 from chatbot.entity_matcher import InstanceIndex, normalize
 from ontology.instances import build_instances
 from ontology.namespace import EX
-from ontology.schema import NAME_PREFIXES, build_schema
+from ontology.schema import build_schema
 
 
 @pytest.fixture(scope="module")
 def index():
-    return InstanceIndex.from_graph(build_schema() + build_instances(), NAME_PREFIXES)
+    return InstanceIndex.from_graph(build_schema() + build_instances())
 
 
 @pytest.mark.parametrize(
@@ -81,5 +81,15 @@ def test_individual_without_label_uses_local_name():
     g = Graph()
     g.add((EX.Hospital, RDF.type, OWL.Class))
     g.add((EX.H1, RDF.type, EX.Hospital))
+    g.add((EX.name, RDFS.subPropertyOf, RDFS.label))
     g.add((EX.H1, EX.name, Literal("Hôpital Necker")))
-    assert InstanceIndex.from_graph(g).search("Necker")[0].label == "H1"
+    assert InstanceIndex.from_graph(g).search("Hôpital Necker")[0].label == "H1"
+
+
+def test_only_name_literals_are_indexed():
+    g = Graph()
+    g.add((EX.Hospital, RDF.type, OWL.Class))
+    g.add((EX.H1, RDF.type, EX.Hospital))
+    g.add((EX.H1, RDFS.label, Literal("Hôpital Necker")))
+    g.add((EX.H1, RDFS.comment, Literal("Pédiatrie")))
+    assert InstanceIndex.from_graph(g).search("Pédiatrie")[0].score < 50

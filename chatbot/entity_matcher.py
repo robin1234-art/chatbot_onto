@@ -6,9 +6,14 @@ L'utilisateur désigne souvent une entité avec une orthographe approximative
 individu (`rdfs:label`, `ex:name`) et classe les individus par proximité
 lexicale avec un terme, éventuellement restreint à une classe.
 
+Seuls les littéraux de nom sont indexés : `rdfs:label`, `skos:altLabel` et
+leurs sous-propriétés (`ex:name`...). Un littéral descriptif ("femme", une
+motivation) ferait sinon d'un mot courant l'alias de nombreux individus.
+
 La comparaison se fait sur des chaînes normalisées (minuscules, sans accents
 ni ponctuation), une seconde fois sans le préfixe usuel de la classe ("Dr",
-"Hôpital"...) pour que "Bernard" retrouve "Dr Bernard".
+"Hôpital"...) pour que "Bernard" retrouve "Dr Bernard". Ces préfixes sont
+lus dans l'ontologie (annotation `chatbot:namePrefix` de la classe).
 """
 
 from __future__ import annotations
@@ -19,7 +24,14 @@ from dataclasses import dataclass
 
 from rapidfuzz import fuzz
 from rdflib import Graph, Literal, URIRef
-from rdflib.namespace import OWL, RDF, RDFS
+from rdflib.namespace import OWL, RDF, RDFS, SKOS
+
+from ontology.namespace import CHATBOT
+
+# Individus représentatifs retenus par classe (voir `examples`) : tous
+# jusqu'à MAX_LISTED_INDIVIDUALS, sinon les EXAMPLES_PER_CLASS plus cités.
+EXAMPLES_PER_CLASS = 3
+MAX_LISTED_INDIVIDUALS = 8
 
 
 def normalize(text: str) -> str:
@@ -58,6 +70,8 @@ class Match:
     uri: URIRef
     label: str  # label canonique de l'individu, à réinjecter dans la question
     score: float
+    # Classe et description de l'individu, pour distinguer des homonymes.
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -81,32 +95,54 @@ class _Entry:
 class InstanceIndex:
     """Individus des classes OWL du graphe, indexés par leurs littéraux."""
 
-    def __init__(self, entries: list[_Entry], classes: dict[URIRef, str]):
+    def __init__(
+        self,
+        entries: list[_Entry],
+        classes: dict[URIRef, str],
+        examples: dict[URIRef, tuple[str, ...]] | None = None,
+        descriptions: dict[URIRef, str] | None = None,
+    ):
         self._entries = entries
         self.classes = classes  # URI de classe -> label
+        # URI de classe -> labels d'individus représentatifs, pour montrer aux
+        # LLM à quoi ressemble un individu de chaque classe.
+        self.examples = examples or {}
+        self._descriptions = descriptions or {}  # URI d'individu -> rdfs:comment
 
     @classmethod
-    def from_graph(
-        cls,
-        graph: Graph,
-        name_prefixes: dict[URIRef, tuple[str, ...]] | None = None,
-    ) -> InstanceIndex:
-        """Indexe les individus de chaque classe OWL du graphe.
-
-        `name_prefixes` associe à une classe les préfixes usuels des noms de
-        ses individus ("Dr", "Hôpital"...), ignorés lors d'une 2e comparaison.
-        """
-        name_prefixes = name_prefixes or {}
+    def from_graph(cls, graph: Graph) -> InstanceIndex:
+        """Indexe les individus de chaque classe OWL du graphe par leurs noms."""
+        name_props = {
+            prop
+            for root in (RDFS.label, SKOS.altLabel)
+            for prop in graph.transitive_subjects(RDFS.subPropertyOf, root)
+        }
         entries: dict[tuple[URIRef, str], _Entry] = {}
         classes: dict[URIRef, str] = {}
+        examples: dict[URIRef, tuple[str, ...]] = {}
+        descriptions: dict[URIRef, str] = {}
         for cls_uri in graph.subjects(RDF.type, OWL.Class):
             classes[cls_uri] = str(graph.value(cls_uri, RDFS.label) or local_name(cls_uri))
-            prefixes = tuple(normalize(p) for p in name_prefixes.get(cls_uri, ()))
+            # Plus long d'abord : "université de" avant "université".
+            prefixes = tuple(
+                sorted(
+                    {normalize(str(p)) for p in graph.objects(cls_uri, CHATBOT.namePrefix)},
+                    key=len,
+                    reverse=True,
+                )
+            )
+            labelled = []
             for individual in graph.subjects(RDF.type, cls_uri):
                 label = graph.value(individual, RDFS.label)
+                if label is not None:
+                    # Les plus cités d'abord : "Marie Curie" plutôt qu'un inconnu.
+                    labelled.append((-len(set(graph.subjects(None, individual))), str(label)))
                 label = str(label) if label is not None else local_name(individual)
-                for obj in graph.objects(individual):
-                    if not (isinstance(obj, Literal) and isinstance(obj.value, str)):
+                comment = graph.value(individual, RDFS.comment)
+                if comment is not None:
+                    descriptions[individual] = str(comment)
+                for prop, obj in graph.predicate_objects(individual):
+                    if prop not in name_props or not isinstance(obj, Literal):
                         continue
                     norm = normalize(str(obj))
                     stripped = strip_prefix(norm, prefixes) if prefixes else norm
@@ -118,7 +154,15 @@ class InstanceIndex:
                         prefixes,
                         stripped if stripped != norm and stripped else None,
                     )
-        return cls(list(entries.values()), classes)
+            if len(labelled) > MAX_LISTED_INDIVIDUALS:
+                labelled = sorted(labelled)[:EXAMPLES_PER_CLASS]
+            examples[cls_uri] = tuple(label for _, label in sorted(labelled))
+        return cls(list(entries.values()), classes, examples, descriptions)
+
+    def _describe(self, entry: _Entry) -> str:
+        """ "Lieu, ville du Massachusetts" : classe puis description éventuelle."""
+        parts = [self.classes[entry.cls], self._descriptions.get(entry.uri)]
+        return ", ".join(p for p in parts if p)
 
     def search(self, term: str, cls: URIRef | None = None) -> list[Match]:
         """Individus classés par score décroissant, un seul match par individu.
@@ -132,5 +176,5 @@ class InstanceIndex:
                 continue
             score = entry.score(norm_term)
             if entry.uri not in best or score > best[entry.uri].score:
-                best[entry.uri] = Match(entry.uri, entry.label, score)
+                best[entry.uri] = Match(entry.uri, entry.label, score, self._describe(entry))
         return sorted(best.values(), key=lambda m: (-m.score, m.label))

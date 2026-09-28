@@ -11,7 +11,10 @@ ARISTOTE_API_KEY = os.environ.get("ARISTOTE_API_KEY")
 ARISTOTE_BASE_URL = os.environ.get("ARISTOTE_BASE_URL", "https://openrouter.ai/api/v1")
 ARISTOTE_MODEL = os.environ.get("ARISTOTE_MODEL", "openai/gpt-4o-mini")
 
-ONTOLOGY_PATH = Path(__file__).resolve().parent.parent / "ontology" / "data" / "ontology.ttl"
+# Ontologie interrogée : extrait Wikidata des prix Nobel par défaut,
+# ontology/data/ontology.ttl pour l'ontologie médicale jouet.
+_DATA_DIR = Path(__file__).resolve().parent.parent / "ontology" / "data"
+ONTOLOGY_PATH = Path(os.environ.get("ONTOLOGY_PATH", _DATA_DIR / "nobel.ttl"))
 
 # Score minimal (0-100, rapidfuzz.fuzz.ratio sur chaînes normalisées) pour
 # proposer à l'utilisateur un individu de l'ontologie à la place d'un nom

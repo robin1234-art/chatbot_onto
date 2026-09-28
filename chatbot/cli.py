@@ -12,6 +12,7 @@ import argparse
 import logging
 
 from .config import FUZZY_SUGGEST_THRESHOLD
+from .entity_matcher import Match
 from .graph_qa import build_chain
 from .llm import get_llm
 from .resolver import QuestionResolver, Resolution, Status
@@ -26,25 +27,27 @@ def _input(prompt: str) -> str:
         return ""
 
 
-def choose_entity(resolution: Resolution) -> str | None:
+def choose_entity(resolution: Resolution) -> Match | None:
     """Demande à l'utilisateur quelle entité il désignait.
 
-    Renvoie le label retenu, ou None pour garder sa formulation.
+    Renvoie l'individu retenu, ou None pour garder sa formulation.
     """
     text = resolution.mention.text
     candidates = resolution.candidates
 
     if resolution.status is Status.SUGGESTION:
-        label = candidates[0].label
-        answer = _input(f'Vouliez-vous dire "{label}" au lieu de "{text}" ? [O/n] ')
-        return label if answer in ("", "o", "oui", "y", "yes") else None
+        match = candidates[0]
+        answer = _input(
+            f'Vouliez-vous dire "{match.label}" ({match.description}) au lieu de "{text}" ? [O/n] '
+        )
+        return match if answer in ("", "o", "oui", "y", "yes") else None
 
     if resolution.status is Status.AMBIGUOUS:
         print(f'"{text}" peut désigner plusieurs entités :')
     else:
         print(f'Aucune entité ne correspond à "{text}". Entités proches du même type :')
     for i, match in enumerate(candidates, start=1):
-        print(f"  {i}. {match.label}")
+        print(f"  {i}. {match.label} ({match.description})")
     print(f'  0. Garder "{text}"')
 
     while True:
@@ -52,7 +55,7 @@ def choose_entity(resolution: Resolution) -> str | None:
         if answer in ("", "0"):
             return None
         if answer.isdigit() and 1 <= int(answer) <= len(candidates):
-            return candidates[int(answer) - 1].label
+            return candidates[int(answer) - 1]
         print(f"Choix invalide : entrez un nombre entre 0 et {len(candidates)}.")
 
 
@@ -60,7 +63,11 @@ def ask(chain, resolver: QuestionResolver, question: str) -> None:
     reformulated = resolver.reformulate(question, choose_entity)
     if reformulated != question:
         print(f"\nQuestion reformulée : {reformulated}")
-    result = chain.invoke({"query": reformulated})
+    try:
+        result = chain.invoke({"query": reformulated})
+    except Exception as error:  # requête SPARQL invalide, erreur du LLM...
+        print(f"\nÉchec : {error}\n")
+        return
     print(f"\nSPARQL généré :\n{result.get('sparql_query')}")
     print(f"\nRéponse : {result.get('result')}\n")
 
