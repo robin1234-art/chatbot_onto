@@ -8,18 +8,31 @@ chatbot et son évaluation portent sur un instantané fixe : Wikidata évolue.
 
 Déroulé :
 1. attributions : lauréat, prix, année et motivation (qualificatifs de P166) ;
-2. faits sur les lauréats (nationalité, naissance, études, employeurs...) ;
+2. faits sur les lauréats (nationalité, naissance, études, employeurs...),
+   dont les dates de naissance et de décès avec leur précision ;
 3. pays des lieux et des établissements rencontrés ;
 4. labels, alias et descriptions (fr, repli mul puis en) des entités rencontrées.
 
 Chaque entité est typée d'après son rôle dans l'extrait (objet de P27 ->
 Pays, de P69/P108 -> Établissement...) plutôt que par sa classe Wikidata,
 trop fine et hétérogène (université publique, collège d'Oxford...).
+
+Une date Wikidata connue à l'année près est stockée au 1er janvier
+("1951-01-01", précision 9) : la stocker comme date complète inventerait un
+jour de naissance. L'année est donc toujours stockée à part (nobel:birthYear),
+et la date complète seulement si Wikidata la connaît au jour près.
+
+Usage alternatif, sans interroger Wikidata :
+    python -m ontology.nobel.extract --schema-only
+
+remplace le schéma de ontology/data/nobel.ttl par celui de schema.py, sans
+toucher aux individus.
 """
 
 from __future__ import annotations
 
 import json
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -62,7 +75,14 @@ LINK_RANGES = {
     NOBEL.worksFor: NOBEL.Institution,
     NOBEL.doctoralAdvisor: NOBEL.Person,
 }
-PERSON_VALUES = ("P31", "P21", "P569", "P570", "P734")
+PERSON_VALUES = ("P31", "P21", "P734")
+# Dates des lauréats : propriété Wikidata -> (propriété de la date, de l'année)
+PERSON_DATES = {
+    "P569": (NOBEL.birthDate, NOBEL.birthYear),
+    "P570": (NOBEL.deathDate, NOBEL.deathYear),
+}
+# Précisions Wikidata (wikibase:timePrecision) : 9 = année, 11 = jour.
+YEAR_PRECISION, DAY_PRECISION = 9, 11
 # "mul" : label multilingue par défaut, que Wikidata utilise pour les noms
 # propres à la place des labels fr/en identiques.
 LANGS = ("fr", "mul", "en")
@@ -108,8 +128,21 @@ def to_date(value: str) -> date | None:
         return None
 
 
-def fetch_awards() -> list[tuple[str, str, int | None, str | None]]:
-    """(lauréat, prix, année, motivation en anglais), dédoublonnés."""
+def to_year(value: str) -> int | None:
+    """Année d'une date Wikidata ("-0500-01-01T00:00:00Z" -> -500)."""
+    try:
+        return int(value[: value.index("-", 1)])
+    except ValueError:
+        return None
+
+
+def fetch_awards() -> list[tuple[str, str, int, str | None]]:
+    """(lauréat, prix, année, motivation en anglais), dédoublonnés.
+
+    Une attribution sans date est écartée : c'est une erreur de Wikidata
+    (personnage de fiction, famille entière...), toute attribution réelle
+    étant datée.
+    """
     rows = sparql(f"""
         SELECT ?laureate ?prize ?date ?why WHERE {{
           VALUES ?prize {{ {" ".join(f"wd:{p}" for p in PRIZES)} }}
@@ -117,12 +150,38 @@ def fetch_awards() -> list[tuple[str, str, int | None, str | None]]:
           OPTIONAL {{ ?st pq:P585 ?date }}
           OPTIONAL {{ ?st pq:P6208 ?why FILTER(LANG(?why) = "en") }}
         }}""")
-    awards: dict[tuple[str, str, int | None], str | None] = {}
+    awards: dict[tuple[str, str, int], str | None] = {}
+    undated = set()
     for row in rows:
-        day = to_date(row["date"]["value"]) if "date" in row else None
-        key = (qid(row["laureate"]), qid(row["prize"]), day.year if day else None)
+        year = to_year(row["date"]["value"]) if "date" in row else None
+        if year is None:
+            undated.add((qid(row["laureate"]), qid(row["prize"])))
+            continue
+        key = (qid(row["laureate"]), qid(row["prize"]), year)
         awards[key] = awards.get(key) or (row["why"]["value"] if "why" in row else None)
+    if undated:
+        print(f"  {len(undated)} attribution(s) sans date écartée(s) : {sorted(undated)}")
     return [(*key, why) for key, why in awards.items()]
+
+
+def fetch_dates(ids: set[str]) -> list[tuple[str, str, str, int]]:
+    """(sujet, propriété, date brute, précision) des dates de `PERSON_DATES`.
+
+    Seules les déclarations de meilleur rang sont lues, comme avec `wdt:`.
+    """
+    pairs = " ".join(f"(p:{p} psv:{p})" for p in PERSON_DATES)
+    dates = []
+    for block in batches(ids):
+        for row in sparql(f"""
+            SELECT ?s ?p ?time ?precision WHERE {{
+              VALUES ?s {{ {block} }} VALUES (?p ?psv) {{ {pairs} }}
+              ?s ?p ?st . ?st a wikibase:BestRank ; ?psv ?v .
+              ?v wikibase:timeValue ?time ; wikibase:timePrecision ?precision .
+            }}"""):
+            dates.append(
+                (qid(row["s"]), qid(row["p"]), row["time"]["value"], int(row["precision"]["value"]))
+            )
+    return dates
 
 
 def fetch_values(ids: set[str], props: Iterable[str]) -> list[tuple[str, str, dict]]:
@@ -202,11 +261,15 @@ def build_graph() -> Graph:
             g.add((subject, prop, WD[qid(o)]))
         elif p == "P21":
             g.add((subject, NOBEL.gender, Literal(GENDERS.get(qid(o), "autre"))))
-        elif p in ("P569", "P570") and (day := to_date(o["value"])):
-            prop = NOBEL.birthDate if p == "P569" else NOBEL.deathDate
-            g.add((subject, prop, Literal(day, datatype=XSD.date)))
         elif p == "P734":
             family_names[s].add(qid(o))
+
+    for s, p, value, precision in fetch_dates(humans):
+        date_prop, year_prop = PERSON_DATES[p]
+        if precision >= YEAR_PRECISION and (year := to_year(value)) is not None:
+            g.add((WD[s], year_prop, Literal(year, datatype=XSD.integer)))
+        if precision >= DAY_PRECISION and (day := to_date(value)):
+            g.add((WD[s], date_prop, Literal(day, datatype=XSD.date)))
 
     located = {e for e, cls in types.items() if cls in (NOBEL.Place, NOBEL.Institution)}
     print(f"3/4 pays de {len(located)} lieux et établissements")
@@ -235,15 +298,14 @@ def build_graph() -> Graph:
                 g.add((uri, NOBEL.familyName, Literal(labels[item])))
 
     for laureate, prize, year, why in awards:
-        award = NOBEL[f"award_{laureate}_{prize}_{year or 'unknown'}"]
+        award = NOBEL[f"award_{laureate}_{prize}_{year}"]
         g.add((award, RDF.type, NOBEL.NobelAward))
         g.add((WD[laureate], NOBEL.received, award))
         g.add((award, NOBEL.category, WD[prize]))
         g.add((WD[laureate], NOBEL.wonPrize, WD[prize]))
         # Pas de label : l'attribution n'est pas une entité que l'on nomme,
         # et elle encombrerait l'index flou du chatbot.
-        if year is not None:
-            g.add((award, NOBEL.year, Literal(year, datatype=XSD.integer)))
+        g.add((award, NOBEL.year, Literal(year, datatype=XSD.integer)))
         if why:
             g.add((award, NOBEL.motivation, Literal(why, lang="en")))
 
@@ -254,7 +316,21 @@ def build_graph() -> Graph:
     return g
 
 
+def refresh_schema() -> None:
+    """Remplace le schéma de OUTPUT par celui de schema.py, individus inchangés."""
+    graph = Graph().parse(OUTPUT)
+    kinds = (OWL.Class, OWL.ObjectProperty, OWL.DatatypeProperty, OWL.AnnotationProperty)
+    for term in {t for kind in kinds for t in graph.subjects(RDF.type, kind)}:
+        graph.remove((term, None, None))
+    graph += build_schema()
+    graph.serialize(destination=OUTPUT, format="turtle")
+    print(f"Schéma remplacé : {len(graph)} triplets -> {OUTPUT}")
+
+
 def main() -> None:
+    if "--schema-only" in sys.argv[1:]:
+        refresh_schema()
+        return
     graph = build_graph()
     OUTPUT.parent.mkdir(exist_ok=True)
     graph.serialize(destination=OUTPUT, format="turtle")

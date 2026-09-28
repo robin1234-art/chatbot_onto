@@ -4,13 +4,13 @@ An ontology-based chatbot that combines LLMs with a formally constructed ontolog
 ## Ontologie
 
 Le chatbot interroge par défaut un **extrait de Wikidata sur les prix Nobel**
-([ontology/data/nobel.ttl](ontology/data/nobel.ttl), ~52 000 triplets) :
+([ontology/data/nobel.ttl](ontology/data/nobel.ttl), ~54 000 triplets) :
 
 | Classe | Individus | Exemples de relations |
 |---|---|---|
-| `Person` | 1 333 (lauréats + directeurs de thèse) | `citizenOf`, `bornIn`, `educatedAt`, `worksFor`, `doctoralAdvisor` |
-| `Organization` | 33 (surtout prix de la paix) | `received`, `wonPrize` |
-| `NobelAward` | 1 033 attributions | `category`, `year`, `motivation` |
+| `Person` | 1 333 (lauréats + directeurs de thèse) | `citizenOf`, `bornIn`, `educatedAt`, `worksFor`, `doctoralAdvisor`, `birthDate`/`birthYear` |
+| `Organization` | 31 (surtout prix de la paix) | `received`, `wonPrize` |
+| `NobelAward` | 1 031 attributions | `category`, `year`, `motivation` |
 | `NobelPrize` | 6 catégories | |
 | `Institution` / `Place` / `Country` | 1 566 / 994 / 163 | `locatedIn` |
 
@@ -23,6 +23,13 @@ individus gardent leur IRI Wikidata (`wd:Q7186`), avec label (fr, repli
 `mul` puis en), alias (`skos:altLabel`) et description (`rdfs:comment`).
 L'extrait est versionné : Wikidata évolue, l'évaluation doit porter sur un
 instantané fixe.
+
+Dates : Wikidata stocke une date connue à l'année près au 1er janvier
+(précision 9). L'extraction lit la précision : l'année est toujours stockée
+(`nobel:birthYear`, `nobel:deathYear`, entiers), la date complète
+(`nobel:birthDate`, `xsd:date`) seulement si elle est connue au jour près.
+Les attributions sans date (personnage de fiction, famille entière) sont
+écartées.
 
 L'ontologie médicale jouet d'origine reste disponible
 (`ONTOLOGY_PATH=ontology/data/ontology.ttl`) et sert aux tests.
@@ -43,8 +50,12 @@ question
   ├─ 2. résolution (fuzzy, sans LLM) candidats dans l'ontologie
   │      └─ confirmation utilisateur si la correction n'est pas triviale
   ├─ 3. reformulation               label canonique + IRI de l'individu
+  ├─ 4. dates (regex, sans LLM)     valeur explicite des dates et périodes
   │
-  └─ GraphSparqlQAChain (inchangée) question -> SPARQL -> résultats -> réponse
+  └─ GraphSparqlQAChain             question -> SPARQL -> résultats -> réponse
+         └─ CleanRdfGraph           nettoyage déterministe avant exécution :
+                                    balises, préfixes en double, sens des
+                                    triplets, individus, types et dates
 ```
 
 ```
@@ -63,7 +74,11 @@ chatbot/            # chatbot LLM sur l'ontologie
   llm.py               # client LLM (API compatible OpenAI)
   entity_matcher.py    # index flou des individus de l'ontologie
   resolver.py          # résolution des noms d'entités avant la chaîne SPARQL
-  rdf_graph.py          # RdfGraph : balises markdown, exemples d'individus
+  dates.py              # explicitation des dates de la question
+  rdf_graph.py          # RdfGraph : nettoyage des requêtes, exemples d'individus
+  triple_direction.py   # remise des triplets dans le sens du schéma
+  individuals.py        # individus désignés par leur nom ou une IRI inventée
+  typed_literals.py     # conversion des littéraux (nombres, dates, périodes)
   graph_qa.py          # chaîne RdfGraph + GraphSparqlQAChain, prompts FR
   cli.py                # boucle de discussion + confirmation des corrections
 
@@ -96,6 +111,8 @@ exécution directe (`python ontology/build.py`).
 ```bash
 # 1. (Optionnel) Réextraire l'ontologie Nobel depuis Wikidata (~2 min)
 python -m ontology.nobel.extract
+#    ... ou n'y remplacer que le schéma, après modification de schema.py
+python -m ontology.nobel.extract --schema-only
 #    ... ou régénérer l'ontologie médicale jouet
 python -m ontology.build
 
@@ -172,6 +189,86 @@ Implémentée dans [chatbot/resolver.py](chatbot/resolver.py) et
 Le choix de l'utilisateur passe par un callback (`Chooser`) : le resolver ne
 fait aucune entrée/sortie, la CLI fournit l'implémentation terminal.
 
+## Corrections de la requête générée
+
+`CleanRdfGraph.query` analyse la requête générée avec rdflib (`parseQuery` +
+`translateQuery`) et corrige son **algèbre**, pas son texte, avant de
+l'exécuter. Chaque correction est déterministe, fondée sur le schéma, et
+tracée dans la CLI (`[sens]`, `[individus]`, `[types]`). Le SPARQL affiché
+reste celui du LLM.
+
+Ces défauts produisent tous une requête valide qui ne renvoie rien, sans
+erreur. Une consigne du prompt ne suffit pas à les éviter : le LLM les
+reproduit malgré elle, d'un tirage à l'autre.
+
+### Sens des triplets
+
+[chatbot/triple_direction.py](chatbot/triple_direction.py). Le LLM écrit
+`?attribution nobel:received ?laureat` au lieu de
+`?laureat nobel:received ?attribution`. Les classes des termes sont déduites
+des typages (`?a a nobel:NobelAward`), du domaine et de la portée des *autres*
+triplets, et du graphe pour les IRI d'individus. Un triplet dont le sujet est
+de la classe de la portée (ou l'objet de celle du domaine) est inversé. Une
+propriété dont domaine et portée coïncident (`doctoralAdvisor`) n'est jamais
+inversée.
+
+### Individus mal désignés
+
+[chatbot/individuals.py](chatbot/individuals.py). Même quand la question
+fournit l'IRI, le LLM écrit parfois `nobel:category "prix Nobel de la paix"`
+(un nom) ou `nobel:category nobel:physics` (une IRI inventée). L'objet d'une
+propriété d'objet est remplacé par l'individu de la classe de la portée qui
+porte exactement ce nom, ou par l'IRI de cette classe citée dans la question.
+Sans candidat unique, il est laissé tel quel.
+
+### Types des littéraux et dates
+
+[chatbot/typed_literals.py](chatbot/typed_literals.py). La portée
+(`rdfs:range`) de chaque propriété de donnée donne le type attendu
+(`nobel:year` → `xsd:integer`, `nobel:birthDate` → `xsd:date`).
+
+| Écrit par le LLM | Exécuté |
+|---|---|
+| `nobel:year "2024"` | `nobel:year 2024` |
+| `FILTER(?y > "1950")`, `?y` lié à `nobel:year` | `FILTER(?y > 1950)` |
+| `FILTER(YEAR(?b) = "1913")` | `FILTER(YEAR(?b) = 1913)` |
+| `nobel:year "2024-10-11"` | `nobel:year 2024` |
+| `nobel:birthDate "14/09/1951"` ou `"1951-09-14T00:00:00Z"` | `nobel:birthDate "1951-09-14"^^xsd:date` |
+| `FILTER(?b > "2000")` sur un `xsd:date` | `FILTER(?b >= "2001-01-01"^^xsd:date)` |
+| `nobel:birthDate "1913"` (ou `"1913"^^xsd:gYear`) | `nobel:birthDate ?v` + `FILTER(?v >= "1913-01-01" && ?v < "1914-01-01")` |
+
+Une date partielle ("1951", "1951-09") désigne une **période** : elle n'est
+égale à aucune date complète. Elle est remplacée par ses bornes, pour chaque
+opérateur (`=`, `!=`, `<`, `<=`, `>`, `>=`), des deux côtés de l'opérateur et
+dans les filtres imbriqués. Un littéral non convertible (`"années 50"`) ou
+porteur d'une langue est laissé tel quel.
+
+Non couvert : `IN (...)`, dates comparées à une fonction autre que
+`YEAR`/`MONTH`/`DAY`.
+
+## Dates de la question
+
+[chatbot/dates.py](chatbot/dates.py), après la résolution des entités. Le
+LLM ne connaît pas la date du jour et traduit mal les périodes. Chaque
+expression reconnue est suivie de sa valeur explicite, comme les entités :
+
+| Question | Reformulée |
+|---|---|
+| le 14 septembre 1951, le 14/09/1951 | … (1951-09-14) |
+| en août 1951 | … (1951-08) |
+| l'an dernier, cette année, il y a 10 ans | … (2025), (2026), (2016) |
+| les années 50 | … (de 1950 à 1959) |
+| au XXe siècle | … (de 1901 à 2000) |
+
+Une année seule est déjà explicite et reste telle quelle. « Le dernier prix »
+n'est pas traduit en année (le dernier prix de l'extrait n'est pas forcément
+celui de l'année en cours) : le prompt SPARQL demande l'année maximale par
+une sous-requête, sans `LIMIT`, pour garder tous les co-lauréats.
+
+Le résolveur d'entités retire aussi l'année accolée à une mention (« prix
+Nobel de la paix 2024 » → « prix Nobel de la paix ») : sinon, la
+correspondance n'était plus exacte et l'utilisateur devait confirmer.
+
 ## Roadmap suivie
 
 1. **v0 — Text-to-SPARQL brut.** `GraphSparqlQAChain` sur l'ontologie.
@@ -203,27 +300,35 @@ fait aucune entrée/sortie, la CLI fournit l'implémentation terminal.
      renommé `nobel:received` (lauréat → Attribution).
    - Résultats vides complétés par les connaissances du LLM de réponse
      (hallucination masquée) : prompt de réponse restreint aux résultats.
+   - Questions filtrées par année ("Qui a gagné le prix Nobel de la paix en
+     2024 ?") en échec, pour deux raisons cumulées. Le LLM déclarait deux
+     préfixes pour le même espace de noms (`ex:` et `nobel:`), que rdflib
+     7.6 refuse (`Unknown namespace prefix : ex`) : `CleanRdfGraph` ramène
+     les doublons au premier préfixe. Il comparait aussi l'année à une chaîne
+     (`nobel:year "2024"`, stockée en `xsd:integer`). Une consigne du prompt
+     ("nombres sans guillemets") n'a pas suffi : remplacée par une conversion
+     déterministe d'après les types du schéma (voir
+     [Corrections de la requête générée](#corrections-de-la-requête-générée)).
+   - « Quel est le prix Nobel de la paix 2024 ? » restait sans réponse
+     malgré le typage : le LLM inversait `nobel:received` malgré son
+     renommage, écrivait le nom de la catégorie au lieu de son IRI, ou
+     inventait `nobel:physics`. Ces défauts sont désormais corrigés dans
+     l'algèbre, d'après le domaine et la portée des propriétés. Les dates
+     sont traitées de bout en bout : précision Wikidata à l'extraction,
+     années entières dans le schéma, périodes dans les requêtes, dates
+     relatives explicitées dans la question.
 
 ## Limites connues
 
 - **Extraction instable des noms communs.** "Nobel de littérature" est
-  parfois repéré, parfois non ; sans IRI, le LLM SPARQL invente
-  `nobel:prixNobelDeLitterature` ou compare une propriété d'objet à une chaîne.
+  parfois repéré, parfois non. Sans IRI dans la question, un nom exact
+  écrit comme littéral est corrigé, mais pas une IRI inventée
+  (`nobel:prixNobelDeLitterature`).
 - **SPARQL invalide occasionnel** (`SELECT COUNT(...)` sans alias) : l'erreur
   est affichée, sans nouvel essai.
-- **Questions filtrées par année** ("Qui a gagné le prix Nobel de la paix en
-  2024 ?") : échec, pour deux raisons cumulées.
-  1. Le LLM déclare deux préfixes pour le même espace de noms
-     (`PREFIX ex:` et `PREFIX nobel:` → `http://example.org/onto-nobel#`).
-     rdflib (7.6) n'en retient qu'un : `Unknown namespace prefix : ex`,
-     alors que la requête est du SPARQL valide.
-  2. Même corrigée, la requête compare l'année à une chaîne
-     (`nobel:year "2024"`) alors qu'elle est stockée en `xsd:integer` : aucun
-     résultat. Avec `nobel:year 2024`, la réponse est bien *Nihon Hidankyō*.
-
-  Pistes : normaliser les préfixes avant exécution (dans `CleanRdfGraph`),
-  préciser le type dans le commentaire de `nobel:year` ("entier, sans
-  guillemets"), ou renvoyer l'erreur au LLM pour un nouvel essai.
+- **Contraintes logiques ajoutées.** "Lauréats du Nobel de physique nés avant
+  1860" génère aussi `FILTER(?annee < 1860)` sur l'année du prix : la
+  requête est bien typée mais fausse, aucun résultat.
 
 - **Questions de description pauvres.** "Qui est Bob ?" génère
   `SELECT ?name … FILTER(?name = "Bob")` : la requête est correcte mais
@@ -234,6 +339,16 @@ fait aucune entrée/sortie, la CLI fournit l'implémentation terminal.
   pas le nom de l'entité interrogée, le LLM de réponse ne fait pas le lien
   ("Dr Bernard" : Bob/Asthme/Pitié-Salpêtrière trouvés, réponse "aucune
   donnée").
+- **Résultats SPARQL peu interprétables par le LLM de réponse.** Il ne
+  reçoit que la question et une liste brute de tuples
+  (`[(Literal('Nihon Hidankyō'),)]`) : ni le nom des colonnes, ni la requête
+  exécutée, ni les conditions appliquées (année, catégorie, « le dernier »),
+  ni les corrections faites par `CleanRdfGraph`. Il doit deviner ce que
+  représentent les valeurs, et doute parfois de résultats corrects. Ex. « qui
+  a reçu le dernier prix Nobel de physique ? » : requête juste, mais réponse
+  « les résultats ne précisent pas qui a reçu le dernier prix », l'année
+  n'étant pas dans les colonnes. Une consigne du prompt de réponse atténue le
+  problème sans le régler.
 - **Jointures sur-contraintes.** Le LLM ajoute des triplets non demandés qui
   éliminent des lignes sans le signaler. Ex. "quels patients sont soignés de
   quelles maladies et où ?" exige `?doctor specialistIn ?disease` : Chloé
@@ -271,25 +386,39 @@ Par ordre de priorité :
    ```
 
    Déterministe, testable sans LLM ; le LLM ne fait que rédiger.
-2. **Prompts personnalisés de la chaîne** (`sparql_select_prompt`,
+2. **Retravailler l'interprétabilité des résultats SPARQL** transmis au
+   LLM de reformulation, pour qu'il comprenne ce que la requête a fait :
+   - résultats présentés en tableau avec le nom des colonnes (`?laureat`,
+     `?annee`), dates et nombres lisibles, labels plutôt qu'IRI ;
+   - résumé en langage naturel de la requête **corrigée** (celle réellement
+     exécutée, pas le texte du LLM) : entités ciblées, conditions et filtres
+     (« catégorie = prix Nobel de physique, année = année maximale »),
+     tris et agrégats ;
+   - variables de filtrage ajoutées aux colonnes renvoyées (année,
+     catégorie), pour que la réponse puisse les citer ;
+   - corrections appliquées par `CleanRdfGraph` (`[sens]`, `[individus]`,
+     `[types]`) signalées au LLM ;
+   - distinction explicite entre « aucun résultat » et « résultat
+     partiel » (colonnes `OPTIONAL` vides).
+3. **Prompts personnalisés de la chaîne** (`sparql_select_prompt`,
    `qa_prompt` de `GraphSparqlQAChain.from_llm`, la chaîne restant
    inchangée) : ne contraindre que ce que la question demande, mettre
    l'information annexe en `OPTIONAL`, parcourir les relations dans les deux
    sens, renvoyer les labels ; préciser au LLM de réponse à quelle entité se
    rapportent les résultats.
-3. **Contexte d'entité pour toutes les questions.** Injecter le voisinage des
+4. **Contexte d'entité pour toutes les questions.** Injecter le voisinage des
    entités résolues comme contexte de réponse, pas seulement pour
    `describe`.
-4. **Diagnostic des jointures.** Si une requête renvoie moins de lignes
+5. **Diagnostic des jointures.** Si une requête renvoie moins de lignes
    qu'attendu, la relâcher contrainte par contrainte pour signaler "N
    résultats exclus par la condition X".
-5. **Modélisation n-aire du traitement** (individu `Traitement` reliant
+6. **Modélisation n-aire du traitement** (individu `Traitement` reliant
    médecin, patient et maladie), si le sens "soigné pour" doit être
    exprimable.
-6. **Validation des concepts** (classes/propriétés) avec un seuil élevé, et
+7. **Validation des concepts** (classes/propriétés) avec un seuil élevé, et
    refus explicite "concept inconnu de l'ontologie" plutôt qu'une
    substitution silencieuse.
-7. **Interface web** : le callback `Chooser` se remplace par une
+8. **Interface web** : le callback `Chooser` se remplace par une
    interruption de graphe (ex. LangGraph) attendant la réponse utilisateur.
-8. **Passage à l'échelle** : embeddings/vector store pour la résolution si
+9. **Passage à l'échelle** : embeddings/vector store pour la résolution si
    l'ontologie grossit, et sortie de `langchain-community`.

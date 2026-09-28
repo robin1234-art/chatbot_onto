@@ -10,12 +10,14 @@ Usage :
 
 import argparse
 import logging
+from datetime import date
 
 from .config import FUZZY_SUGGEST_THRESHOLD
+from .dates import annotate_dates
 from .entity_matcher import Match
 from .graph_qa import build_chain
 from .llm import get_llm
-from .resolver import QuestionResolver, Resolution, Status
+from .resolver import QuestionResolver, Resolution, Status, mentioned_iris
 
 
 def _input(prompt: str) -> str:
@@ -60,9 +62,10 @@ def choose_entity(resolution: Resolution) -> Match | None:
 
 
 def ask(chain, resolver: QuestionResolver, question: str) -> None:
-    reformulated = resolver.reformulate(question, choose_entity)
+    reformulated = annotate_dates(resolver.reformulate(question, choose_entity), date.today())
     if reformulated != question:
         print(f"\nQuestion reformulée : {reformulated}")
+    chain.graph.mentioned = mentioned_iris(reformulated)
     try:
         result = chain.invoke({"query": reformulated})
     except Exception as error:  # requête SPARQL invalide, erreur du LLM...
@@ -89,10 +92,10 @@ def main() -> None:
     args = parser.parse_args()
 
     if not args.quiet:
-        # Trace les corrections d'entités appliquées d'office.
-        resolver_logger = logging.getLogger("chatbot.resolver")
-        resolver_logger.setLevel(logging.INFO)
-        resolver_logger.addHandler(logging.StreamHandler())
+        # Trace les corrections appliquées d'office (entités, types des littéraux).
+        chatbot_logger = logging.getLogger("chatbot")
+        chatbot_logger.setLevel(logging.INFO)
+        chatbot_logger.addHandler(logging.StreamHandler())
 
     chain = build_chain(verbose=not args.quiet)
     resolver = QuestionResolver.from_graph(chain.graph.graph, get_llm(), FUZZY_SUGGEST_THRESHOLD)

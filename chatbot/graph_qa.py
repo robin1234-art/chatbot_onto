@@ -18,25 +18,26 @@ from .rdf_graph import CleanRdfGraph
 SPARQL_SELECT_PROMPT = PromptTemplate.from_template(
     """Tâche : écrire une requête SPARQL SELECT qui répond à une question sur un graphe OWL.
 
-Exemple, sur un autre graphe, pour la question :
-Qui a réalisé le Voyage dans la Lune ("Le Voyage dans la Lune" <http://example.org/films#f42>) ?
-PREFIX ex: <http://example.org/films#>
-SELECT DISTINCT ?directorName WHERE {{
-    <http://example.org/films#f42> ex:directedBy ?director .
-    ?director ex:name ?directorName .
-}}
-
 Règles :
 - N'utilise que les classes et propriétés du schéma ci-dessous, et déclare tous
   les préfixes employés.
 - Quand la question donne l'IRI d'un individu entre chevrons, utilise cette
   IRI telle quelle.
+- Déclare les préfix en haut de requête.
 - N'invente jamais l'IRI d'un individu (personne, lieu, prix...). Sans IRI
   fournie, désigne-le par sa propriété de nom, en recopiant exactement le
   texte de la question.
 - Renvoie le nom lisible des individus (propriété de nom), jamais leur IRI seul.
 - Respecte le sens des propriétés : la description « A -> B » d'une propriété
   signifie que A est le sujet du triplet et B son objet.
+- Écris les nombres et les années sans guillemets (nobel:year 2024), et les
+  dates complètes typées ("1951-09-14"^^xsd:date, préfixe xsd déclaré).
+- Pour une année seule, utilise une propriété d'année entière si le schéma
+  en a une, sinon YEAR(?date) : une année n'est jamais égale à une date.
+- Pour « le dernier », « le plus récent » ou « le premier », ne suppose pas
+  l'année en cours : calcule l'année extrême dans une sous-requête
+  ({{ SELECT (MAX(?y) AS ?annee) WHERE {{ ... }} }}), puis garde toutes les
+  lignes de cette année, sans LIMIT (un prix peut avoir plusieurs lauréats).
 - Utilise DISTINCT, et OPTIONAL pour une information qui peut manquer.
 - Réponds uniquement avec la requête, sans explication.
 
@@ -55,9 +56,13 @@ SPARQL_QA_PROMPT = PromptTemplate.from_template(
 Règles :
 - Appuie-toi uniquement sur les résultats ci-dessous, jamais sur tes propres
   connaissances : n'ajoute aucun fait qui n'y figure pas.
+- Les résultats répondent à la question telle quelle : la requête a déjà
+  appliqué ses conditions (année, « le dernier »...), même quand elles
+  n'apparaissent pas dans les colonnes. Ne les remets pas en doute.
 - Si les résultats sont vides, réponds que l'information n'a pas été trouvée
   dans l'ontologie.
 - Ne mentionne ni IRI ni SPARQL.
+- Écris les dates en toutes lettres (« 14 septembre 1951 » pour 1951-09-14).
 
 Résultats :
 {context}

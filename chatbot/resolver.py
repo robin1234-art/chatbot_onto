@@ -83,7 +83,8 @@ Classes de l'ontologie, avec des exemples d'individus :
 
 Pour chaque mention, recopie le texte EXACTEMENT tel qu'il apparaît dans la
 question, titre ou préfixe compris ("docteur Bornard"), sans corriger
-l'orthographe, et indique la classe la plus probable (nom de classe ci-dessus,
+l'orthographe. N'inclus pas la date ou l'année qui accompagne le nom : "prix
+Nobel de la paix 2024" -> "prix Nobel de la paix". Indique la classe la plus probable (nom de classe ci-dessus,
 ou null si aucune ne convient).
 
 Réponds uniquement avec un objet JSON, sans texte autour :
@@ -92,6 +93,10 @@ Réponds uniquement avec un objet JSON, sans texte autour :
 Question : {question}"""
 
 _CODE_FENCE_RE = re.compile(r"^```[a-zA-Z]*\n?|\n?```$", re.MULTILINE)
+
+# Année accolée à une mention malgré la consigne ("prix Nobel de la paix
+# 2024", "en 1921 Einstein") : elle fausserait la comparaison floue.
+_YEAR_EDGE_RE = re.compile(r"^(?:(?:en|de|du)\s+)?\d{4}\b\W*|\W*\b(?:(?:en|de|du)\s+)?\d{4}$")
 
 
 def extract_mentions(question: str, llm, index: InstanceIndex) -> list[Mention]:
@@ -117,6 +122,7 @@ def extract_mentions(question: str, llm, index: InstanceIndex) -> list[Mention]:
     mentions = []
     for item in items:
         text = str(item.get("text") or "").strip() if isinstance(item, dict) else ""
+        text = _YEAR_EDGE_RE.sub("", text).strip()
         if not text:
             continue
         if text.lower() not in question.lower():
@@ -154,6 +160,14 @@ def resolve(mention: Mention, index: InstanceIndex, threshold: float) -> Resolut
         return Resolution(mention, Status.AMBIGUOUS, tuple(close[:MAX_CANDIDATES]))
     status = Status.EXACT if above[0].score == 100 else Status.SUGGESTION
     return Resolution(mention, status, (above[0],))
+
+
+_IRI_RE = re.compile(r"<([^<>\s]+)>")
+
+
+def mentioned_iris(question: str) -> list[URIRef]:
+    """IRI d'individus citées dans une question reformulée par `rewrite`."""
+    return [URIRef(iri) for iri in _IRI_RE.findall(question)]
 
 
 def rewrite(question: str, choices: list[tuple[Mention, Match]]) -> str:

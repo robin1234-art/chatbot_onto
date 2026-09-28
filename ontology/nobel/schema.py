@@ -103,21 +103,60 @@ OBJECT_PROPERTIES = {
     ),
 }
 
-# Propriétés de donnée : URI -> (label FR, portée, commentaire FR)
+# Propriétés de donnée : URI -> (label FR, domaine, portée, commentaire FR)
+# Le format attendu des valeurs est répété dans le commentaire, seul lu par le
+# LLM : sans lui, il écrit les années entre guillemets et compare une date
+# complète à une année.
 DATATYPE_PROPERTIES = {
     NOBEL.name: (
         "nom",
+        None,
         XSD.string,
         "Tout individu -> nom lisible (chaîne sans langue). À utiliser pour désigner "
         'une entité par son nom : ?x nobel:name "Marie Curie".',
     ),
-    NOBEL.familyName: ("nom de famille", XSD.string, "Personne -> nom de famille."),
-    NOBEL.gender: ("genre", XSD.string, 'Personne -> genre : "femme" ou "homme".'),
-    NOBEL.birthDate: ("date de naissance", XSD.date, "Personne -> date de naissance."),
-    NOBEL.deathDate: ("date de décès", XSD.date, "Personne -> date de décès."),
-    NOBEL.year: ("année", XSD.integer, "Attribution -> année d'attribution du prix."),
+    NOBEL.familyName: ("nom de famille", NOBEL.Person, XSD.string, "Personne -> nom de famille."),
+    NOBEL.gender: (
+        "genre",
+        NOBEL.Person,
+        XSD.string,
+        'Personne -> genre : "femme" ou "homme".',
+    ),
+    NOBEL.birthDate: (
+        "date de naissance",
+        NOBEL.Person,
+        XSD.date,
+        "Personne -> date de naissance complète (xsd:date AAAA-MM-JJ), absente si "
+        "seule l'année est connue. Pour une année, préférer nobel:birthYear.",
+    ),
+    NOBEL.deathDate: (
+        "date de décès",
+        NOBEL.Person,
+        XSD.date,
+        "Personne -> date de décès complète (xsd:date AAAA-MM-JJ), absente si seule "
+        "l'année est connue. Pour une année, préférer nobel:deathYear.",
+    ),
+    NOBEL.birthYear: (
+        "année de naissance",
+        NOBEL.Person,
+        XSD.integer,
+        "Personne -> année de naissance (entier sans guillemets : nobel:birthYear 1913).",
+    ),
+    NOBEL.deathYear: (
+        "année de décès",
+        NOBEL.Person,
+        XSD.integer,
+        "Personne -> année de décès (entier sans guillemets : nobel:deathYear 1960).",
+    ),
+    NOBEL.year: (
+        "année",
+        NOBEL.NobelAward,
+        XSD.integer,
+        "Attribution -> année d'attribution du prix (entier sans guillemets : " "nobel:year 2024).",
+    ),
     NOBEL.motivation: (
         "motivation",
+        NOBEL.NobelAward,
         XSD.string,
         "Attribution -> motivation officielle du prix, en anglais.",
     ),
@@ -152,10 +191,12 @@ def build_schema() -> Graph:
         if range_ is not None:
             g.add((prop, RDFS.range, range_))
 
-    for prop, (label, range_, comment) in DATATYPE_PROPERTIES.items():
+    for prop, (label, domain, range_, comment) in DATATYPE_PROPERTIES.items():
         g.add((prop, RDF.type, OWL.DatatypeProperty))
         g.add((prop, RDFS.label, Literal(label, lang="fr")))
         g.add((prop, RDFS.comment, Literal(comment, lang="fr")))
+        if domain is not None:
+            g.add((prop, RDFS.domain, domain))
         g.add((prop, RDFS.range, range_))
 
     for prop, parent in LABEL_SUBPROPERTIES.items():

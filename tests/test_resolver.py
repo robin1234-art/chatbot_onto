@@ -178,3 +178,10 @@ def test_question_about_classes_is_unchanged(index):
     resolver = resolver_for(index, mentions())
     q = resolver.reformulate("Quels médecins travaillent à l'hôpital ?", lambda _: None)
     assert q == "Quels médecins travaillent à l'hôpital ?"
+
+
+@pytest.mark.parametrize("text", ["Asthme 2024", "Asthme en 2024", "2024 Asthme", "en 2024 Asthme"])
+def test_extract_drops_year_next_to_a_mention(index, text):
+    llm = FakeLLM(mentions((text, "Disease")))
+    question = f"Qui soigne {text} ?"
+    assert extract_mentions(question, llm, index) == [Mention("Asthme", EX.Disease)]
