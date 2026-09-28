@@ -2,7 +2,7 @@
 
 Usage :
     # Question unique, réponse puis sortie (utile en script / non-interactif)
-    python -m chatbot.cli "Quels médecins soignent des patients atteints de diabète ?"
+    python -m chatbot.cli "Quels lauréats du Nobel de chimie ont étudié à Cambridge ?"
 
     # Mode interactif : boucle de questions tant qu'aucune question n'est fournie
     python -m chatbot.cli

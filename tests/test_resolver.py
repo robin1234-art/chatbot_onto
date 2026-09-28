@@ -4,13 +4,22 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from rdflib import RDF, RDFS, Literal
+from conftest import (
+    CAMBRIDGE_MA,
+    CAMBRIDGE_UK,
+    CAMBRIDGE_UNIV,
+    CAMUS,
+    CURIE,
+    FEYNMAN,
+    FRANCE,
+    LITERATURE,
+    PEACE,
+    PHYSICS,
+)
 
 from chatbot.entity_matcher import InstanceIndex
 from chatbot.resolver import Mention, QuestionResolver, Status, extract_mentions, resolve
-from ontology.instances import build_instances
-from ontology.namespace import EX
-from ontology.schema import build_schema
+from ontology.namespace import NOBEL
 
 THRESHOLD = 75
 
@@ -32,8 +41,8 @@ def mentions(*items):
 
 
 @pytest.fixture(scope="module")
-def index():
-    return InstanceIndex.from_graph(build_schema() + build_instances())
+def index(nobel_graph):
+    return InstanceIndex.from_graph(nobel_graph)
 
 
 # --- index flou ------------------------------------------------------------
@@ -42,10 +51,9 @@ def index():
 @pytest.mark.parametrize(
     ("term", "expected"),
     [
-        ("Hopital Pitie Salpetriere", EX.HopitalPitieSalpetriere),  # accents, casse
-        ("saint-louis", EX.HopitalSaintLouis),  # sans préfixe de classe
-        ("l'hopital saint-louis", EX.HopitalSaintLouis),  # article
-        ("Docteur Martin", EX.DrMartin),  # autre préfixe de la classe
+        ("MARIE CURIE", CURIE),  # casse
+        ("Nobel de litterature", LITERATURE),  # accents, autre préfixe de la classe
+        ("le prix Nobel de physique", PHYSICS),  # article
     ],
 )
 def test_normalized_equivalents_score_100(index, term, expected):
@@ -53,38 +61,38 @@ def test_normalized_equivalents_score_100(index, term, expected):
     assert (best.uri, best.score) == (expected, 100)
 
 
-def test_only_name_literals_are_indexed():
-    graph = build_schema() + build_instances()
-    graph.add((EX.HopitalSaintLouis, RDFS.comment, Literal("Pédiatrie")))
-    assert InstanceIndex.from_graph(graph).search("Pédiatrie")[0].score < 100
+def test_only_name_literals_are_indexed(index):
+    # "physicien américain" est la description de Richard Feynman, pas un nom.
+    assert index.search("physicien américain")[0].score < 100
 
 
 # --- extraction ------------------------------------------------------------
 
 
 def test_extract_maps_class_names_to_uris(index):
-    response = json.dumps(mentions(("docteur Bornard", "Doctor"), ("Saint-Louis", "Inconnue")))
+    response = json.dumps(mentions(("Richard Feynmann", "Person"), ("Cambridge", "Inconnue")))
     llm = FakeLLM(f"```json\n{response}\n```")
-    found = extract_mentions("Le docteur Bornard travaille-t-il à Saint-Louis ?", llm, index)
-    assert found == [Mention("docteur Bornard", EX.Doctor), Mention("Saint-Louis", None)]
-    assert "- Doctor : Médecin" in llm.prompt
+    found = extract_mentions("Richard Feynmann a-t-il étudié à Cambridge ?", llm, index)
+    assert found == [Mention("Richard Feynmann", NOBEL.Person), Mention("Cambridge", None)]
+    assert "- Person : Personne" in llm.prompt
 
 
 @pytest.mark.parametrize("response", ["pas du JSON", '{"autre": 1}'])
 def test_extract_ignores_unreadable_response(index, response):
-    assert extract_mentions("Qui soigne Bob ?", FakeLLM(response), index) == []
+    assert extract_mentions("Qui a formé Marie Curie ?", FakeLLM(response), index) == []
 
 
 def test_extract_ignores_mention_absent_from_question(index):
     # Le LLM a corrigé l'orthographe au lieu de recopier : non substituable.
-    llm = FakeLLM(mentions(("docteur Bernard", "Doctor")))
-    assert extract_mentions("Qui est le docteur Bornard ?", llm, index) == []
+    llm = FakeLLM(mentions(("Richard Feynman", "Person")))
+    assert extract_mentions("Qui a formé Richard Feinman ?", llm, index) == []
 
 
-@pytest.mark.parametrize("text", ["Asthme 2024", "en 2024 Asthme"])
+@pytest.mark.parametrize("text", ["prix Nobel de la paix 2024", "en 2024 prix Nobel de la paix"])
 def test_extract_drops_year_next_to_a_mention(index, text):
-    llm = FakeLLM(mentions((text, "Disease")))
-    assert extract_mentions(f"Qui soigne {text} ?", llm, index) == [Mention("Asthme", EX.Disease)]
+    llm = FakeLLM(mentions((text, "NobelPrize")))
+    found = extract_mentions(f"Qui a reçu le {text} ?", llm, index)
+    assert found == [Mention("prix Nobel de la paix", NOBEL.NobelPrize)]
 
 
 # --- résolution ------------------------------------------------------------
@@ -93,15 +101,17 @@ def test_extract_drops_year_next_to_a_mention(index, text):
 @pytest.mark.parametrize(
     ("mention", "status", "expected"),
     [
-        (Mention("diabète", EX.Disease), Status.EXACT, {EX.Diabete}),
-        (Mention("docteur Bornard", EX.Doctor), Status.SUGGESTION, {EX.DrBernard}),
+        (Mention("marie curie", NOBEL.Person), Status.EXACT, {CURIE}),
+        (Mention("Richard Feynmann", NOBEL.Person), Status.SUGGESTION, {FEYNMAN}),
         # Classe devinée fausse : recherche élargie à toute l'ontologie.
-        (Mention("Bornard", EX.Patient), Status.SUGGESTION, {EX.DrBernard}),
+        (Mention("Richard Feynmann", NOBEL.Place), Status.SUGGESTION, {FEYNMAN}),
         # Rien de proche : individus de la classe.
+        (Mention("Niels Bohr", NOBEL.Person), Status.NOT_FOUND, {CAMUS, FRANCE, CURIE, FEYNMAN}),
+        # Homonymes : les deux villes, et l'université exactement homonyme sans son préfixe.
         (
-            Mention("docteur Lefèvre", EX.Doctor),
-            Status.NOT_FOUND,
-            {EX.DrMartin, EX.DrBernard, EX.DrDupont},
+            Mention("Cambridge", NOBEL.Place),
+            Status.AMBIGUOUS,
+            {CAMBRIDGE_UK, CAMBRIDGE_MA, CAMBRIDGE_UNIV},
         ),
     ],
 )
@@ -110,30 +120,22 @@ def test_resolve(index, mention, status, expected):
     assert (r.status, {m.uri for m in r.candidates}) == (status, expected)
 
 
-def test_exact_homonyms_of_other_classes_are_candidates():
-    # "Martin" : le Dr Martin, mais aussi un hôpital Martin exactement homonyme.
-    graph = build_schema() + build_instances()
-    graph.add((EX.HopitalMartin, RDF.type, EX.Hospital))
-    graph.add((EX.HopitalMartin, RDFS.label, Literal("Hôpital Martin", lang="fr")))
-    r = resolve(Mention("Martin", EX.Doctor), InstanceIndex.from_graph(graph), THRESHOLD)
-    assert r.status is Status.AMBIGUOUS
-    assert {m.uri for m in r.candidates} == {EX.DrMartin, EX.HopitalMartin}
-
-
 # --- flux complet ----------------------------------------------------------
 
 
 def test_exact_match_is_rewritten_without_asking(index):
-    resolver = QuestionResolver(FakeLLM(mentions(("diabète", "Disease"))), index, THRESHOLD)
+    resolver = QuestionResolver(
+        FakeLLM(mentions(("Nobel de la paix", "NobelPrize"))), index, THRESHOLD
+    )
 
     def choose(_):
         raise AssertionError("aucune confirmation attendue")
 
-    q = resolver.reformulate("Quels patients ont du diabète ?", choose)
-    assert q == f'Quels patients ont du diabète ("Diabète" <{EX.Diabete}>) ?'
+    q = resolver.reformulate("Qui a reçu le Nobel de la paix ?", choose)
+    assert q == f'Qui a reçu le Nobel de la paix ("prix Nobel de la paix" <{PEACE}>) ?'
 
 
 def test_rejected_suggestion_keeps_user_wording(index):
-    resolver = QuestionResolver(FakeLLM(mentions(("docteur Bornard", "Doctor"))), index, THRESHOLD)
-    q = resolver.reformulate("Que peux-tu me dire du docteur Bornard ?", lambda _: None)
-    assert q == "Que peux-tu me dire du docteur Bornard ?"
+    resolver = QuestionResolver(FakeLLM(mentions(("Richard Feynmann", "Person"))), index, THRESHOLD)
+    q = resolver.reformulate("Qui a formé Richard Feynmann ?", lambda _: None)
+    assert q == "Qui a formé Richard Feynmann ?"

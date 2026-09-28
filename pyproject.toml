@@ -48,3 +48,5 @@ ignore = ["E501"]
 [tool.vulture]
 paths = ["chatbot", "ontology", "tests"]
 min_confidence = 60
+# Lu par LangChain (RdfGraph.get_schema), hors du code analysé.
+ignore_names = ["schema"]

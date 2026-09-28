@@ -1,39 +1,15 @@
 """Corrections des requêtes SPARQL générées, via CleanRdfGraph.query (sans appel au LLM)."""
 
 import pytest
-from rdflib import RDF, XSD, Literal
+from conftest import HIDANKYO, PEACE
 
 from chatbot.rdf_graph import CleanRdfGraph
-from ontology.namespace import NOBEL, WD
-from ontology.nobel.schema import build_schema
-
-PEACE = WD.Q35637
 
 
 @pytest.fixture(scope="module")
-def graph(tmp_path_factory):
-    """Trois lauréats du prix Nobel de la paix (données simplifiées)."""
-    g = build_schema()
-    g.bind("wd", WD)
-    g.add((PEACE, RDF.type, NOBEL.NobelPrize))
-    g.add((PEACE, NOBEL.name, Literal("prix Nobel de la paix")))
-    for qid, name, year, born, advisor in [
-        ("Q1", "Nihon Hidankyō", 2024, None, None),
-        ("Q2", "Albert Camus", 1957, "1913-11-07", "Q3"),
-        ("Q3", "Anatole France", 1921, "1844-04-16", None),
-    ]:
-        award = NOBEL[f"award_{qid}"]
-        g.add((WD[qid], NOBEL.name, Literal(name)))
-        g.add((WD[qid], NOBEL.received, award))
-        g.add((award, RDF.type, NOBEL.NobelAward))
-        g.add((award, NOBEL.category, PEACE))
-        g.add((award, NOBEL.year, Literal(year, datatype=XSD.integer)))
-        if born:
-            g.add((WD[qid], NOBEL.birthDate, Literal(born, datatype=XSD.date)))
-        if advisor:
-            g.add((WD[qid], NOBEL.doctoralAdvisor, WD[advisor]))
+def graph(nobel_graph, tmp_path_factory):
     path = tmp_path_factory.mktemp("onto") / "nobel.ttl"
-    g.serialize(destination=path, format="turtle")
+    nobel_graph.serialize(destination=path, format="turtle")
     return CleanRdfGraph(source_file=str(path), standard="owl", serialization="ttl")
 
 
@@ -78,7 +54,7 @@ def test_individual_name_is_replaced_by_its_iri(graph):
 
 
 @pytest.mark.parametrize(
-    ("mentioned", "expected"), [([WD.Q1, PEACE], ["Nihon Hidankyō"]), ([], [])]
+    ("mentioned", "expected"), [([HIDANKYO, PEACE], ["Nihon Hidankyō"]), ([], [])]
 )
 def test_invented_iri_is_replaced_by_the_mentioned_one(graph, mentioned, expected):
     query = """SELECT ?nom WHERE { ?a nobel:category nobel:peace ; nobel:year 2024 .

@@ -2,8 +2,8 @@
 
 Déroulé pour une question :
 
-1. le LLM repère les mentions d'individus ("docteur Bornard") et devine
-   leur classe (`Doctor`), sans rien corriger ;
+1. le LLM repère les mentions d'individus ("Richard Feynmann") et devine
+   leur classe (`Person`), sans rien corriger ;
 2. chaque mention est cherchée dans l'index flou, restreint à la classe
    devinée (élargi à toute l'ontologie si la classe ne donne rien ; les
    correspondances exactes des autres classes sont toujours ajoutées) :
@@ -76,13 +76,13 @@ Repère toutes les mentions d'individus précis de l'ontologie :
   ci-dessous : ils se repèrent même abrégés ;
 - les adjectifs qui renvoient à un individu ("français" -> un pays).
 N'extrais pas les noms de classes employés de façon générique ("les
-médecins", "un lauréat", "une université").
+physiciens", "un lauréat", "une université").
 
 Classes de l'ontologie, avec des exemples d'individus :
 {classes}
 
 Pour chaque mention, recopie le texte EXACTEMENT tel qu'il apparaît dans la
-question, titre ou préfixe compris ("docteur Bornard"), sans corriger
+question, titre ou préfixe compris ("université de Cambrige"), sans corriger
 l'orthographe. N'inclus pas la date ou l'année qui accompagne le nom : "prix
 Nobel de la paix 2024" -> "prix Nobel de la paix". Indique la classe la plus probable (nom de classe ci-dessus,
 ou null si aucune ne convient).

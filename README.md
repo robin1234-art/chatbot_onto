@@ -16,9 +16,9 @@ Le chatbot interroge par défaut un **extrait de Wikidata sur les prix Nobel**
 
 Wikidata n'est pas une ontologie OWL (pas de `owl:Class`, typage par
 `wdt:P31`, identifiants opaques `P166`) : l'extraction
-([ontology/nobel/extract.py](ontology/nobel/extract.py)) interroge le point
+([ontology/extract.py](ontology/extract.py)) interroge le point
 d'accès SPARQL de Wikidata et convertit le résultat vers un vocabulaire OWL
-lisible (`nobel:`, [ontology/nobel/schema.py](ontology/nobel/schema.py)). Les
+lisible (`nobel:`, [ontology/schema.py](ontology/schema.py)). Les
 individus gardent leur IRI Wikidata (`wd:Q7186`), avec label (fr, repli
 `mul` puis en), alias (`skos:altLabel`) et description (`rdfs:comment`).
 L'extrait est versionné : Wikidata évolue, l'évaluation doit porter sur un
@@ -30,9 +30,6 @@ Dates : Wikidata stocke une date connue à l'année près au 1er janvier
 (`nobel:birthDate`, `xsd:date`) seulement si elle est connue au jour près.
 Les attributions sans date (personnage de fiction, famille entière) sont
 écartées.
-
-L'ontologie médicale jouet d'origine reste disponible
-(`ONTOLOGY_PATH=ontology/data/ontology.ttl`) et sert aux tests.
 
 ## Architecture
 
@@ -59,15 +56,11 @@ question
 ```
 
 ```
-ontology/           # construction des ontologies (rdflib)
+ontology/           # ontologie des prix Nobel (rdflib)
   namespace.py       # espaces de noms partagés (dont chatbot:namePrefix)
-  nobel/              # ontologie des prix Nobel (défaut)
-    schema.py          # TBox : vocabulaire nobel: lisible
-    extract.py         # extraction Wikidata -> data/nobel.ttl
-  schema.py           # ontologie médicale jouet : TBox
-  instances.py        # ontologie médicale jouet : ABox
-  build.py             # sérialise schema.ttl / instances.ttl / ontology.ttl
-  data/                 # fichiers .ttl générés
+  schema.py          # TBox : vocabulaire nobel: lisible
+  extract.py         # extraction Wikidata -> data/nobel.ttl
+  data/nobel.ttl     # extrait versionné
 
 chatbot/            # chatbot LLM sur l'ontologie
   config.py           # variables d'environnement, chemin de l'ontologie
@@ -82,7 +75,7 @@ chatbot/            # chatbot LLM sur l'ontologie
   graph_qa.py          # chaîne RdfGraph + GraphSparqlQAChain, prompts FR
   cli.py                # boucle de discussion + confirmation des corrections
 
-tests/              # tests sans appel LLM (LLM simulé)
+tests/              # tests sans appel LLM, sur un petit graphe Nobel (conftest.py)
 ```
 
 
@@ -103,18 +96,16 @@ compatible OpenAI (Aristote, OpenRouter...) via `ARISTOTE_API_KEY`,
 
 `ontology/` et `chatbot/` utilisent des imports relatifs. L'install éditable
 enregistre le repo comme package dans le venv : toujours lancer les scripts
-via `python -m <package>.<module>` (ex. `python -m ontology.build`), jamais en
-exécution directe (`python ontology/build.py`).
+via `python -m <package>.<module>` (ex. `python -m ontology.extract`), jamais en
+exécution directe (`python ontology/extract.py`).
 
 ## Utilisation
 
 ```bash
 # 1. (Optionnel) Réextraire l'ontologie Nobel depuis Wikidata (~2 min)
-python -m ontology.nobel.extract
+python -m ontology.extract
 #    ... ou n'y remplacer que le schéma, après modification de schema.py
-python -m ontology.nobel.extract --schema-only
-#    ... ou régénérer l'ontologie médicale jouet
-python -m ontology.build
+python -m ontology.extract --schema-only
 
 # 2. Poser une question unique
 python -m chatbot.cli "Quels lauréats du Nobel de chimie ont étudié à Cambridge ?"
@@ -164,8 +155,8 @@ Implémentée dans [chatbot/resolver.py](chatbot/resolver.py) et
 2. **Résolution** : `rapidfuzz.fuzz.ratio` sur chaînes normalisées
    (minuscules, sans accents ni ponctuation), comparées une 2e fois sans le
    préfixe usuel de la classe, lu dans l'ontologie (annotation
-   `chatbot:namePrefix` : "Bernard" → "Dr Bernard", "Nobel de physique" →
-   "prix Nobel de physique"). Seuls les littéraux de nom sont indexés
+   `chatbot:namePrefix` : "Nobel de physique" → "prix Nobel de physique",
+   "Cambridge" → "université de Cambridge"). Seuls les littéraux de nom sont indexés
    (`rdfs:label`, `skos:altLabel` et leurs sous-propriétés). La recherche est
    restreinte à la classe devinée, élargie à toute l'ontologie si elle ne
    donne rien ; les homonymes exacts des autres classes sont toujours
@@ -271,6 +262,9 @@ correspondance n'était plus exacte et l'utilisateur devait confirmer.
 
 ## Roadmap suivie
 
+Les étapes v0 à v2 portaient sur une ontologie médicale jouet (médecins,
+patients, maladies), retirée depuis.
+
 1. **v0 — Text-to-SPARQL brut.** `GraphSparqlQAChain` sur l'ontologie.
    Constat : échecs silencieux dès qu'un nom est mal orthographié ("Diabetes"
    au lieu de "Diabète", accents manquants) — la requête s'exécute et ne
@@ -330,15 +324,15 @@ correspondance n'était plus exacte et l'utilisateur devait confirmer.
   1860" génère aussi `FILTER(?annee < 1860)` sur l'année du prix : la
   requête est bien typée mais fausse, aucun résultat.
 
-- **Questions de description pauvres.** "Qui est Bob ?" génère
-  `SELECT ?name … FILTER(?name = "Bob")` : la requête est correcte mais
-  tautologique, la réponse ne dit rien. Le LLM ne sait pas qu'il faut
-  renvoyer les relations de l'entité, *dans les deux sens* (le médecin de
-  Bob n'est atteignable que par le triplet entrant `DrBernard treats Bob`).
+- **Questions de description pauvres.** "Qui est Marie Curie ?" peut générer
+  `SELECT ?name … FILTER(?name = "Marie Curie")` : la requête est correcte
+  mais tautologique, la réponse ne dit rien. Le LLM ne sait pas qu'il faut
+  renvoyer les relations de l'entité, *dans les deux sens* (les doctorants
+  d'une personne ne sont atteignables que par le triplet entrant
+  `?doctorant nobel:doctoralAdvisor ?personne`).
 - **Réponse déconnectée de l'entité.** Si les résultats SPARQL ne contiennent
   pas le nom de l'entité interrogée, le LLM de réponse ne fait pas le lien
-  ("Dr Bernard" : Bob/Asthme/Pitié-Salpêtrière trouvés, réponse "aucune
-  donnée").
+  et peut répondre "aucune donnée" malgré des résultats.
 - **Résultats SPARQL peu interprétables par le LLM de réponse.** Il ne
   reçoit que la question et une liste brute de tuples
   (`[(Literal('Nihon Hidankyō'),)]`) : ni le nom des colonnes, ni la requête
@@ -350,14 +344,11 @@ correspondance n'était plus exacte et l'utilisateur devait confirmer.
   n'étant pas dans les colonnes. Une consigne du prompt de réponse atténue le
   problème sans le régler.
 - **Jointures sur-contraintes.** Le LLM ajoute des triplets non demandés qui
-  éliminent des lignes sans le signaler. Ex. "quels patients sont soignés de
-  quelles maladies et où ?" exige `?doctor specialistIn ?disease` : Chloé
-  disparaît car le Dr Dupont n'a pas de spécialité.
-- **Modélisation incomplète.** Aucune relation "soigné *pour* telle
-  maladie" : `treats` relie médecin et patient, sans maladie. Le LLM
-  improvise un lien (souvent `specialistIn`).
+  éliminent des lignes sans le signaler (un triplet obligatoire au lieu
+  d'un `OPTIONAL` : les lauréats sans cette information disparaissent).
 - **Concepts non validés.** Classes et propriétés ne sont pas vérifiées :
-  "infirmier" peut être mappé silencieusement sur `Doctor`.
+  un concept absent de l'ontologie peut être mappé silencieusement sur une
+  classe ou une propriété voisine.
 - **Dépendance à l'extraction.** Une mention non repérée par le LLM n'est pas
   corrigée ; deux mentions dont l'une contient l'autre peuvent être mal
   substituées (remplacement textuel de la 1re occurrence).
@@ -377,9 +368,9 @@ Par ordre de priorité :
 
    ```sparql
    SELECT ?dir ?propLabel ?otherLabel WHERE {
-     { ex:Bob ?p ?other . BIND("sortant" AS ?dir) }
+     { wd:Q7186 ?p ?other . BIND("sortant" AS ?dir) }
      UNION
-     { ?other ?p ex:Bob . BIND("entrant" AS ?dir) }
+     { ?other ?p wd:Q7186 . BIND("entrant" AS ?dir) }
      ?p rdfs:label ?propLabel .
      ?other rdfs:label ?otherLabel .
    }
@@ -412,13 +403,10 @@ Par ordre de priorité :
 5. **Diagnostic des jointures.** Si une requête renvoie moins de lignes
    qu'attendu, la relâcher contrainte par contrainte pour signaler "N
    résultats exclus par la condition X".
-6. **Modélisation n-aire du traitement** (individu `Traitement` reliant
-   médecin, patient et maladie), si le sens "soigné pour" doit être
-   exprimable.
-7. **Validation des concepts** (classes/propriétés) avec un seuil élevé, et
+6. **Validation des concepts** (classes/propriétés) avec un seuil élevé, et
    refus explicite "concept inconnu de l'ontologie" plutôt qu'une
    substitution silencieuse.
-8. **Interface web** : le callback `Chooser` se remplace par une
+7. **Interface web** : le callback `Chooser` se remplace par une
    interruption de graphe (ex. LangGraph) attendant la réponse utilisateur.
-9. **Passage à l'échelle** : embeddings/vector store pour la résolution si
+8. **Passage à l'échelle** : embeddings/vector store pour la résolution si
    l'ontologie grossit, et sortie de `langchain-community`.

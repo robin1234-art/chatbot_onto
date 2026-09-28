@@ -1,18 +1,19 @@
 """Index flou des individus de l'ontologie.
 
 L'utilisateur désigne souvent une entité avec une orthographe approximative
-("docteur Bornard" pour "Dr Bernard", "hopital saint louis" pour
-"Hôpital Saint-Louis"). Ce module indexe les littéraux portés par chaque
-individu (`rdfs:label`, `ex:name`) et classe les individus par proximité
-lexicale avec un terme, éventuellement restreint à une classe.
+("Richard Feynmann" pour "Richard Feynman", "nobel de litterature" pour
+"prix Nobel de littérature"). Ce module indexe les noms portés par chaque
+individu et classe les individus par proximité lexicale avec un terme,
+éventuellement restreint à une classe.
 
 Seuls les littéraux de nom sont indexés : `rdfs:label`, `skos:altLabel` et
-leurs sous-propriétés (`ex:name`...). Un littéral descriptif ("femme", une
+leurs sous-propriétés (`nobel:name`...). Un littéral descriptif ("femme", une
 motivation) ferait sinon d'un mot courant l'alias de nombreux individus.
 
 La comparaison se fait sur des chaînes normalisées (minuscules, sans accents
-ni ponctuation), une seconde fois sans le préfixe usuel de la classe ("Dr",
-"Hôpital"...) pour que "Bernard" retrouve "Dr Bernard". Ces préfixes sont
+ni ponctuation), une seconde fois sans le préfixe usuel de la classe ("prix
+Nobel de", "université de"...) pour que "physique" retrouve "prix Nobel de
+physique". Ces préfixes sont
 lus dans l'ontologie (annotation `chatbot:namePrefix` de la classe).
 """
 
@@ -42,7 +43,7 @@ def normalize(text: str) -> str:
     return " ".join(text.split())
 
 
-# Articles pouvant précéder un préfixe dans un terme ("l'hôpital Saint-Louis").
+# Articles pouvant précéder un préfixe dans un terme ("le prix Nobel de physique").
 _LEADING_ARTICLES = {"l", "le", "la", "les"}
 
 

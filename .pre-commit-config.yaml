@@ -1,4 +1,4 @@
-# Fichiers générés par `python -m ontology.build` : ne pas les retoucher.
+# Fichiers générés par `python -m ontology.extract` : ne pas les retoucher.
 exclude: ^ontology/data/
 
 repos:

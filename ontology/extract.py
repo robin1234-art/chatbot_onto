@@ -1,7 +1,7 @@
 """Extrait de Wikidata les lauréats des prix Nobel et les sérialise en OWL.
 
 Usage :
-    python -m ontology.nobel.extract
+    python -m ontology.extract
 
 Produit ontology/data/nobel.ttl (schéma + individus), versionné pour que le
 chatbot et son évaluation portent sur un instantané fixe : Wikidata évolue.
@@ -23,7 +23,7 @@ jour de naissance. L'année est donc toujours stockée à part (nobel:birthYear)
 et la date complète seulement si Wikidata la connaît au jour près.
 
 Usage alternatif, sans interroger Wikidata :
-    python -m ontology.nobel.extract --schema-only
+    python -m ontology.extract --schema-only
 
 remplace le schéma de ontology/data/nobel.ttl par celui de schema.py, sans
 toucher aux individus.
@@ -45,13 +45,13 @@ from pathlib import Path
 from rdflib import OWL, RDF, RDFS, SKOS, XSD, Graph, Literal, URIRef
 from rdflib.namespace import DCTERMS
 
-from ..namespace import NOBEL, WD
+from .namespace import NOBEL, WD
 from .schema import build_schema
 
 ENDPOINT = "https://query.wikidata.org/sparql"
 USER_AGENT = "chatbot-onto/0.1 (extraction pédagogique des prix Nobel)"
 BATCH_SIZE = 200
-OUTPUT = Path(__file__).resolve().parent.parent / "data" / "nobel.ttl"
+OUTPUT = Path(__file__).resolve().parent / "data" / "nobel.ttl"
 
 PRIZES = ("Q38104", "Q44585", "Q80061", "Q37922", "Q35637", "Q47170")
 HUMAN = "Q5"

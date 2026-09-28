@@ -76,7 +76,7 @@ def build_chain(verbose: bool = True) -> GraphSparqlQAChain:
     if not ONTOLOGY_PATH.exists():
         raise FileNotFoundError(
             f"Ontologie introuvable : {ONTOLOGY_PATH}. "
-            "Générez-la d'abord avec : python -m ontology.build"
+            "Générez-la d'abord avec : python -m ontology.extract"
         )
 
     graph = CleanRdfGraph(
@@ -91,7 +91,7 @@ def build_chain(verbose: bool = True) -> GraphSparqlQAChain:
         sparql_select_prompt=SPARQL_SELECT_PROMPT,
         qa_prompt=SPARQL_QA_PROMPT,
         # Le fichier source est local et versionné : le pire cas d'une requête
-        # UPDATE générée par erreur est régénérable via `python -m ontology.build`.
+        # UPDATE générée par erreur est régénérable via `python -m ontology.extract`.
         allow_dangerous_requests=True,
         return_sparql_query=True,
         verbose=verbose,
